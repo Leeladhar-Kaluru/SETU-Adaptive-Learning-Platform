@@ -1,0 +1,104 @@
+:root {
+  /* Surface & Canvas */
+  --bg-canvas: #F7F6F1;
+  --bg-surface: #FFFFFF;
+  --bg-surface-hover: #FAFAF8;
+  --bg-subtle: #EFEFEA;
+  --bg-accent-subtle: #EEF1FC;
+  
+  /* Text & Ink */
+  --ink-primary: #15233B;
+  --ink-secondary: #4A5873;
+  --ink-muted: #7E8B9F;
+  --ink-inverted: #FFFFFF;
+
+  /* Brand / Action */
+  --brand-primary: #4055D9;
+  --brand-primary-hover: #3142B8;
+  --brand-primary-active: #253396;
+  --brand-subtle: #EEF1FC;
+  
+  /* Status Colors */
+  --color-success: #23795B;
+  --color-success-subtle: #E8F5F0;
+  --color-success-border: #A3D9C4;
+
+  --color-warning: #A65B12;
+  --color-warning-subtle: #FDF5EB;
+  --color-warning-border: #F1CE9C;
+
+  --color-error: #C93B2B;
+  --color-error-subtle: #FDEEED;
+  --color-error-border: #F3BCB8;
+
+  --color-info: #1E66B4;
+  --color-info-subtle: #E8F1FC;
+  --color-info-border: #B4D3F8;
+
+  /* Borders */
+  --border-subtle: #D9DEEA;
+  --border-medium: #BDC8DA;
+  --border-strong: #8E9FB8;
+
+  /* Radii */
+  --radius-xs: 4px;
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 14px;
+  --radius-full: 9999px;
+
+  /* Typography */
+  --font-sans: 'Plus Jakarta Sans', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  --font-mono: 'JetBrains Mono', SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+
+  /* Elevations */
+  --shadow-sm: 0 1px 2px rgba(21, 35, 59, 0.05);
+  --shadow-md: 0 4px 12px rgba(21, 35, 59, 0.06), 0 1px 3px rgba(21, 35, 59, 0.04);
+  --shadow-lg: 0 10px 24px rgba(21, 35, 59, 0.08), 0 2px 6px rgba(21, 35, 59, 0.04);
+  --shadow-drawer: -4px 0 24px rgba(21, 35, 59, 0.12);
+
+  /* Transitions */
+  --transition-fast: 150ms ease;
+  --transition-normal: 250ms ease;
+}
+
+*, *::before, *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html, body {
+  height: 100%;
+  background-color: var(--bg-canvas);
+  color: var(--ink-primary);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+#root {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+a {
+  color: var(--brand-primary);
+  text-decoration: none;
+}
+
+a:hover {
+  text-decoration: underline;
+}
+
+button {
+  font-family: inherit;
+  cursor: pointer;
+  border: none;
+  background: none;
+}
+
+code, pre {
+  font-family: var(--font-mono);
+}
