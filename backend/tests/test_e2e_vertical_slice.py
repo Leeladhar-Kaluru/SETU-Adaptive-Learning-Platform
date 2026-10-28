@@ -1,3 +1,4 @@
+import copy
 import pytest
 import uuid
 import datetime
@@ -9,6 +10,7 @@ from app.services.chunking import chunking_service
 from app.services.retrieval import retrieval_service
 from app.services.lesson_generator import lesson_generator_service
 from app.services.adaptive_engine import adaptive_engine
+from tests.fixtures import valid_lesson_package
 
 pytestmark = pytest.mark.integration
 
@@ -138,22 +140,31 @@ async def test_full_e2e_vertical_slice():
             for r in retrieval["results"]
         ]
 
-        package = lesson_generator_service._build_deterministic_lesson_package(
+        real_refs = [{
+            "citationId": item["citationId"],
+            "chunkId": item["chunkId"],
+            "documentVersionId": str(doc.id),
+            "pageStart": item["pageStart"],
+            "pageEnd": item["pageEnd"],
+            "headingPath": item.get("headingPath", []),
+            "sourceTitle": "Class 9 Science Chapter 5",
+        } for item in evidence_chunks]
+
+        package = valid_lesson_package(
             lesson_id=f"les-{uuid.uuid4().hex[:8]}",
-            lesson_title="Plasma Membrane & Diffusion Mechanics",
             path_id=f"path-{uuid.uuid4().hex[:8]}",
-            grade=9,
-            subject="SCIENCE",
-            source_refs=[{
-                "citationId": evidence_chunks[0]["citationId"],
-                "chunkId": evidence_chunks[0]["chunkId"],
-                "documentVersionId": str(doc.id),
-                "pageStart": evidence_chunks[0]["pageStart"],
-                "pageEnd": evidence_chunks[0]["pageEnd"],
-                "sourceTitle": "Class 9 Science Chapter 5"
-            }],
-            evidence_chunks=evidence_chunks
+            title="Plasma Membrane & Diffusion Mechanics",
         )
+        package["grade"] = 9
+        package["subjectId"] = "SCIENCE"
+        package["sourceRefs"] = copy.deepcopy(real_refs)
+        for block in package["blocks"]:
+            block["sourceRefs"] = copy.deepcopy(real_refs)
+        for example in package["workedExamples"]:
+            example["sourceRefs"] = copy.deepcopy(real_refs)
+        for question in package["practice"] + package["checkpointTest"]:
+            question["sourceRefs"] = copy.deepcopy(real_refs)
+        package["doubtAnchors"][0]["sourceRef"] = copy.deepcopy(real_refs[0])
 
         validation = lesson_generator_service.validate_package(package, evidence_chunks)
         assert validation["status"] == "ready"
