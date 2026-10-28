@@ -1,5 +1,7 @@
 import os
 import json
+import re
+import datetime
 import jsonschema
 from typing import Dict, Any, List, Optional
 from app.core.ai_provider import ai_provider
@@ -20,50 +22,94 @@ with open(LESSON_SCHEMA_PATH, "r", encoding="utf-8") as f:
 with open(VISUAL_SCHEMA_PATH, "r", encoding="utf-8") as f:
     VISUAL_SPEC_SCHEMA = json.load(f)
 
-class LessonGeneratorService:
-    async def generate_outline(self, document_title: str, extracted_pages: List[Dict[str, Any]], grade: int, subject: str) -> Dict[str, Any]:
-        """Generates candidate syllabus outline from extracted page contents."""
-        # Use first 5 pages sample text
-        sample_text = "\n\n".join([f"Page {p['page_number']}: {p['text'][:300]}" for p in extracted_pages[:6]])
-        
-        prompt = (
-            f"You are SETU Curriculum Engine for Indian Class {grade} {subject}.\n"
-            f"Analyze this study material excerpt for document '{document_title}' and generate a structured course outline.\n"
-            f"Format strictly as JSON with keys: title, grade, subject, chapters (list of objects with chapterTitle, pageStart, pageEnd, estimatedLessons, concepts).\n\n"
-            f"Sample Excerpts:\n{sample_text}\n\n"
-            f"Return only valid JSON."
-        )
+_HEADING = re.compile(
+    r"^(chapter\b|unit\b|section\b|lesson\b|#{1,3}\s+|\d{1,2}(?:\.\d{1,2}){0,2}[.)]?\s+\S)",
+    re.IGNORECASE,
+)
 
-        try:
-            content = await ai_provider.generate_chat(
-                messages=[{"role": "user", "content": prompt}],
-                temperature=0.2,
-                max_tokens=1000
-            )
-            # Find JSON block
-            if "```json" in content:
-                content = content.split("```json", 1)[1].split("```", 1)[0].strip()
-            elif "```" in content:
-                content = content.split("```", 1)[1].split("```", 1)[0].strip()
-            
-            outline = json.loads(content)
-            return outline
-        except Exception:
-            # Deterministic fallback outline derived from actual document structure
-            return {
-                "title": document_title.replace(".pdf", "").replace("_", " "),
-                "grade": grade,
-                "subject": subject,
-                "chapters": [
-                    {
-                        "chapterTitle": f"Unit 1: Fundamentals of {subject}",
-                        "pageStart": 1,
-                        "pageEnd": max(len(extracted_pages), 1),
-                        "estimatedLessons": 3,
-                        "concepts": ["Core Concepts", "Structure and Function", "Practical Applications"]
-                    }
-                ]
-            }
+
+class LessonGeneratorService:
+    def build_outline_from_pages(
+        self,
+        document_title: str,
+        extracted_pages: List[Dict[str, Any]],
+        grade: int,
+        subject: str,
+    ) -> Dict[str, Any]:
+        """Build a course outline from headings and page ranges in the extracted text."""
+        pages = []
+        for page in extracted_pages:
+            text = (page.get("text") or "").strip()
+            if not text or text.startswith("[Image-only or empty page"):
+                continue
+            pages.append({"page_number": page.get("page_number") or 1, "text": text})
+        if not pages:
+            raise ValueError("This document has no extractable text to build a learning path.")
+
+        sections: List[Dict[str, Any]] = []
+        current: Optional[Dict[str, Any]] = None
+        for page in pages:
+            heading = self._heading_for_page(page["text"])
+            if heading:
+                if current:
+                    sections.append(current)
+                current = {
+                    "chapterTitle": heading,
+                    "pageStart": page["page_number"],
+                    "pageEnd": page["page_number"],
+                    "concepts": [heading],
+                }
+            elif current:
+                current["pageEnd"] = page["page_number"]
+            else:
+                title = self._first_line(page["text"])
+                current = {
+                    "chapterTitle": title,
+                    "pageStart": page["page_number"],
+                    "pageEnd": page["page_number"],
+                    "concepts": [title],
+                }
+        if current:
+            sections.append(current)
+
+        if len(sections) > 24:
+            step = len(sections) / 24
+            sections = [sections[min(len(sections) - 1, int(i * step))] for i in range(24)]
+
+        last_page = pages[-1]["page_number"]
+        for index, section in enumerate(sections):
+            if index + 1 < len(sections):
+                section["pageEnd"] = max(section["pageStart"], sections[index + 1]["pageStart"] - 1)
+            else:
+                section["pageEnd"] = max(section["pageEnd"], last_page)
+            section["chapterNumber"] = index + 1
+
+        title = document_title.rsplit(".", 1)[0].replace("_", " ")
+        return {
+            "title": title,
+            "grade": grade,
+            "subject": subject,
+            "chapters": sections,
+        }
+
+    def _heading_for_page(self, text: str) -> Optional[str]:
+        for raw in text.splitlines():
+            line = raw.strip()
+            if 4 <= len(line) <= 120 and _HEADING.match(line):
+                return line[:120]
+        return None
+
+    def _first_line(self, text: str) -> str:
+        for raw in text.splitlines():
+            line = " ".join(raw.split())
+            if len(line) >= 8:
+                return line[:80]
+        compact = " ".join(text.split())
+        return compact[:80] or "Extracted section"
+
+    async def generate_outline(self, document_title: str, extracted_pages: List[Dict[str, Any]], grade: int, subject: str) -> Dict[str, Any]:
+        """Outline from the document's own headings and page ranges."""
+        return self.build_outline_from_pages(document_title, extracted_pages, grade, subject)
 
     async def generate_lesson_package(
         self,
@@ -113,7 +159,7 @@ class LessonGeneratorService:
             f"- objectives: [2-3 observable bullet objectives]\n"
             f"- blocks: content blocks of kind 'explanation', 'definition', 'check'\n"
             f"- visuals: [1 visual spec of type 'concept_map' or 'science_process' or 'fraction_model']\n"
-            f"- workedExamples: [{ 'prompt': '...', 'steps': ['...'], 'answer': '...' }]\n"
+            "- workedExamples: [{ 'prompt': '...', 'steps': ['...'], 'answer': '...' }]\n"
             f"- practice: [1-2 practice questions with questionId, prompt, type, conceptIds, answerKey, hints, feedback, validator]\n"
             f"- checkpointTest: [1-2 independent questions]\n"
             f"- takeaways: [2-3 key takeaway sentences]\n\n"
@@ -124,28 +170,38 @@ class LessonGeneratorService:
             content = await ai_provider.generate_chat(
                 messages=[{"role": "user", "content": prompt}],
                 temperature=0.2,
-                max_tokens=2000
+                max_tokens=6000
             )
             if "```json" in content:
                 content = content.split("```json", 1)[1].split("```", 1)[0].strip()
             elif "```" in content:
                 content = content.split("```", 1)[1].split("```", 1)[0].strip()
+            start = content.find("{")
+            end = content.rfind("}")
+            if start >= 0 and end > start:
+                content = content[start:end + 1]
 
-            package = json.loads(content)
-            # Inject source refs
+            try:
+                package = json.loads(content)
+            except json.JSONDecodeError:
+                # Attempt minor structural JSON recovery for unclosed brackets
+                last_brace = content.rfind("}")
+                if last_brace > 0:
+                    package = json.loads(content[:last_brace + 1])
+                else:
+                    raise
+
             package["sourceRefs"] = source_refs
             package["validation"] = {"status": "draft", "checks": []}
-        except Exception:
-            # Create a grounded lesson package conforming to the schema
-            package = self._build_deterministic_lesson_package(
-                lesson_id=lesson_id,
-                lesson_title=lesson_title,
-                path_id=path_id,
-                grade=grade,
-                subject=subject,
-                source_refs=source_refs,
-                evidence_chunks=evidence_chunks
-            )
+
+            # Strip any extraneous top-level keys added by LLM not present in schema
+            allowed_keys = set(LESSON_PACKAGE_SCHEMA.get("properties", {}).keys())
+            if allowed_keys:
+                for k in list(package.keys()):
+                    if k not in allowed_keys:
+                        package.pop(k, None)
+        except Exception as exc:
+            raise RuntimeError(f"Lesson generation failed: {exc}") from exc
 
         # Validate against JSON schema
         validation_result = self.validate_package(package, evidence_chunks)
@@ -155,16 +211,18 @@ class LessonGeneratorService:
 
     def validate_package(self, package: Dict[str, Any], evidence_chunks: List[Dict[str, Any]]) -> Dict[str, Any]:
         """Validates lesson package against schema, citations, and answer keys."""
+        # Strip extraneous top-level keys added by LLM not present in schema
+        allowed_keys = set(LESSON_PACKAGE_SCHEMA.get("properties", {}).keys())
+        if allowed_keys:
+            for k in list(package.keys()):
+                if k not in allowed_keys:
+                    package.pop(k, None)
+
         checks = []
 
         # 1. JSON Schema validation
-        # Provide a candidate object with provisional validation if missing so self-validation passes
-        candidate = dict(package)
-        if "validation" not in candidate:
-            candidate["validation"] = {"status": "validating", "checks": []}
-
         try:
-            jsonschema.validate(instance=candidate, schema=LESSON_PACKAGE_SCHEMA)
+            jsonschema.validate(instance=package, schema=LESSON_PACKAGE_SCHEMA)
             checks.append({"name": "schema_conformance", "passed": True, "details": "Conforms to lesson-package.schema.json"})
         except jsonschema.ValidationError as e:
             checks.append({"name": "schema_conformance", "passed": False, "details": str(e.message)})
@@ -209,154 +267,46 @@ class LessonGeneratorService:
             "details": "Package contains explanation, guided practice, and checkpoint test"
         })
 
+        all_questions = package.get("practice", []) + package.get("checkpointTest", [])
+        source_refs_present = len(package.get("sourceRefs", [])) > 0
+        answer_keys_present = all(
+            str(question.get("answerKey") or "").strip() for question in all_questions
+        )
+        concept_ids_present = all(
+            len(question.get("conceptIds") or []) > 0 for question in all_questions
+        )
+        question_ids = [question.get("questionId") for question in all_questions]
+        question_ids_unique = all(question_ids) and len(question_ids) == len(set(question_ids))
+
+        checks.extend([
+            {
+                "name": "source_refs_present",
+                "passed": source_refs_present,
+                "details": "Lesson cites at least one source reference" if source_refs_present else "Lesson has no source references",
+            },
+            {
+                "name": "answer_keys_nonempty",
+                "passed": answer_keys_present,
+                "details": "Every question has an answer key" if answer_keys_present else "One or more questions have an empty answer key",
+            },
+            {
+                "name": "concept_ids_nonempty",
+                "passed": concept_ids_present,
+                "details": "Every question maps to a concept" if concept_ids_present else "One or more questions have no concept IDs",
+            },
+            {
+                "name": "question_ids_unique",
+                "passed": question_ids_unique,
+                "details": "Question IDs are present and unique" if question_ids_unique else "Question IDs are missing or duplicated",
+            },
+        ])
+
         all_passed = all(c["passed"] for c in checks)
         return {
             "status": "ready" if all_passed else "rejected",
             "checks": checks,
-            "validatedAt": "2026-10-28T12:00:00Z"
+            "validatedAt": datetime.datetime.now(datetime.timezone.utc).isoformat()
         }
 
-    def _build_deterministic_lesson_package(
-        self,
-        lesson_id: str,
-        lesson_title: str,
-        path_id: str,
-        grade: int,
-        subject: str,
-        source_refs: List[Dict[str, Any]],
-        evidence_chunks: List[Dict[str, Any]]
-    ) -> Dict[str, Any]:
-        """Creates a well-formed package conforming directly to the lesson schema."""
-        first_excerpt = evidence_chunks[0]["text"][:250] if evidence_chunks else "Core foundational concept principles."
-        concept_id = f"{subject.lower()}-core"
-
-        return {
-            "schemaVersion": "1.0.0",
-            "lessonId": lesson_id,
-            "lessonVersion": 1,
-            "pathId": path_id,
-            "pathVersion": 1,
-            "title": lesson_title,
-            "grade": grade,
-            "subjectId": subject,
-            "languageTag": "en-IN",
-            "translationStatus": "original",
-            "estimatedMinutes": 15,
-            "sourceRefs": source_refs,
-            "objectives": [
-                f"Understand the fundamental structure of {lesson_title}.",
-                "Explain the primary mechanism using textbook evidence.",
-                "Solve checkpoint practice problems independently."
-            ],
-            "prerequisites": [],
-            "blocks": [
-                {
-                    "blockId": "block-1",
-                    "kind": "explanation",
-                    "heading": f"Introduction to {lesson_title}",
-                    "content": f"{first_excerpt} As documented in the syllabus, this concept forms the bedrock for subsequent advanced units.",
-                    "sourceRefs": source_refs[:1]
-                },
-                {
-                    "blockId": "block-2",
-                    "kind": "definition",
-                    "heading": "Key Definition",
-                    "content": f"A foundational mechanism where components interact systematically within {subject}.",
-                    "sourceRefs": source_refs[:1]
-                }
-            ],
-            "visuals": [
-                {
-                    "visualId": "vis-concept-map",
-                    "type": "concept_map",
-                    "altText": f"Concept hierarchy for {lesson_title}",
-                    "spec": {
-                        "schemaVersion": "1.0.0",
-                        "visualId": "vis-concept-map",
-                        "type": "concept_map",
-                        "altText": f"Concept hierarchy for {lesson_title}",
-                        "data": {
-                            "nodes": [
-                                {"id": "c1", "label": lesson_title},
-                                {"id": "c2", "label": "Key Property"},
-                                {"id": "c3", "label": "Application"}
-                            ],
-                            "edges": [["c1", "c2"], ["c1", "c3"]]
-                        }
-                    }
-                }
-            ],
-            "workedExamples": [
-                {
-                    "prompt": f"How does {lesson_title} apply to observed textbook questions?",
-                    "steps": [
-                        "Identify the initial condition and source definitions.",
-                        "Apply the governing principle step-by-step.",
-                        "Verify dimensional or conceptual consistency."
-                    ],
-                    "answer": "The mechanism operates systematically according to documented rules.",
-                    "sourceRefs": source_refs[:1]
-                }
-            ],
-            "practice": [
-                {
-                    "questionId": f"{lesson_id}-q1",
-                    "type": "multiple_choice",
-                    "prompt": f"Which statement best describes the primary characteristic of {lesson_title}?",
-                    "options": [
-                        "It acts as a selectively permeable barrier governing component movement.",
-                        "It has no interaction with the surrounding medium.",
-                        "It remains completely rigid and impermeable.",
-                        "It only occurs under extreme laboratory conditions."
-                    ],
-                    "conceptIds": [concept_id],
-                    "difficulty": "introductory",
-                    "answerKey": "It acts as a selectively permeable barrier governing component movement.",
-                    "hints": [
-                        "Recall the key definition from Section 1.",
-                        "Consider how selectively permeable membranes permit specific elements to pass."
-                    ],
-                    "feedback": "Correct! As stated on Page 59, the membrane permits entry and exit of selective materials.",
-                    "sourceRefs": source_refs[:1],
-                    "validator": "deterministic"
-                }
-            ],
-            "checkpointTest": [
-                {
-                    "questionId": f"{lesson_id}-t1",
-                    "type": "multiple_choice",
-                    "prompt": f"In an experiment related to {lesson_title}, what ensures selective permeability?",
-                    "options": [
-                        "The lipid bilayer and transport proteins.",
-                        "Only the outer dead cell wall.",
-                        "Complete dissolution of cellular components.",
-                        "Absence of all cellular fluid."
-                    ],
-                    "conceptIds": [concept_id],
-                    "difficulty": "standard",
-                    "answerKey": "The lipid bilayer and transport proteins.",
-                    "hints": [],
-                    "feedback": "Outstanding! The phospholipid bilayer with embedded carrier proteins governs selective transport.",
-                    "sourceRefs": source_refs[:1],
-                    "validator": "deterministic"
-                }
-            ],
-            "takeaways": [
-                f"{lesson_title} is a cornerstone topic for Class {grade} {subject}.",
-                "Source evidence confirms the exact mechanism and definitions.",
-                "Review practice problems and checkpoint feedback before moving forward."
-            ],
-            "doubtAnchors": [
-                {
-                    "anchorId": "block-1",
-                    "label": f"Ask a doubt about {lesson_title}",
-                    "sourceRef": source_refs[0] if source_refs else None
-                }
-            ],
-            "validation": {
-                "status": "draft",
-                "checks": []
-            }
-        }
 
 lesson_generator_service = LessonGeneratorService()

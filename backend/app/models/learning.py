@@ -1,6 +1,6 @@
 import uuid
 import datetime
-from sqlalchemy import Column, String, Integer, Float, Boolean, DateTime, ForeignKey, JSON, Text
+from sqlalchemy import Column, String, Integer, Float, Boolean, DateTime, ForeignKey, JSON, Text, UniqueConstraint
 from sqlalchemy.dialects.postgresql import UUID
 from app.models.base import Base
 
@@ -70,8 +70,13 @@ class QuizAttempt(Base):
     hints_used = Column(JSON, nullable=True)
     elapsed_seconds = Column(Integer, default=0)
     feedback_json = Column(JSON, nullable=True)
-    sync_idempotency_key = Column(String(100), unique=True, nullable=True)
+    sync_idempotency_key = Column(String(100), nullable=True)
+    attempt_kind = Column(String(20), default="practice")
     occurred_at = Column(DateTime, default=datetime.datetime.utcnow)
+
+    __table_args__ = (
+        UniqueConstraint("owner_id", "sync_idempotency_key", name="uq_quiz_attempt_owner_sync"),
+    )
 
 class ConceptEvidence(Base):
     __tablename__ = "concept_evidence"
@@ -84,6 +89,7 @@ class ConceptEvidence(Base):
     outcome = Column(String(50), nullable=False)  # correct, incorrect, partially_correct
     weight = Column(Float, default=1.0)
     rationale = Column(String(300), nullable=True)
+    hints_used = Column(Integer, default=0)
     occurred_at = Column(DateTime, default=datetime.datetime.utcnow)
 
 class ConceptMasterySnapshot(Base):
@@ -98,3 +104,18 @@ class ConceptMasterySnapshot(Base):
     freshness = Column(String(50), default="current")
     explanation_json = Column(JSON, nullable=True)
     calculated_at = Column(DateTime, default=datetime.datetime.utcnow)
+
+
+class StudyEvent(Base):
+    __tablename__ = "study_events"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    owner_id = Column(UUID(as_uuid=True), nullable=False, index=True)
+    path_id = Column(UUID(as_uuid=True), nullable=True)
+    lesson_id = Column(String(80), nullable=True)
+    lesson_title = Column(String(200), nullable=True)
+    event_type = Column(String(40), nullable=False)
+    seconds = Column(Integer, default=0)
+    score = Column(Float, nullable=True)
+    occurred_at = Column(DateTime, default=datetime.datetime.utcnow, index=True)
+
