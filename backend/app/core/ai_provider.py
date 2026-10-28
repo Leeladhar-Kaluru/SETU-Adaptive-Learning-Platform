@@ -3,6 +3,11 @@ import httpx
 from typing import List, Dict, Any, Optional
 from app.core.config import settings
 
+
+class EmbeddingUnavailableError(RuntimeError):
+    """The configured embedding provider could not produce valid vectors."""
+
+
 class AIProviderService:
     def __init__(self):
         self.base_url = settings.LLM_BASE_URL.rstrip("/")
@@ -45,24 +50,43 @@ class AIProviderService:
         return status
 
     async def get_embedding(self, text: str) -> List[float]:
-        """Generates embedding and enforces vector dimension validation."""
-        if not text or not text.strip():
-            return [0.0] * self.expected_dim
+        vectors = await self.get_embeddings_batch([text])
+        return vectors[0]
+
+    async def get_embeddings_batch(self, texts: List[str]) -> List[List[float]]:
+        if not texts:
+            return []
+        clean_inputs = [text.strip() for text in texts]
+        if any(not text for text in clean_inputs):
+            raise ValueError("Cannot embed empty text; remove blank chunks before embedding.")
 
         url = f"{self.base_url}/embeddings"
-        payload = {"model": self.embed_model, "input": text}
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            resp = await client.post(url, json=payload)
-            if resp.status_code != 200:
-                raise RuntimeError(f"Embedding failed with status {resp.status_code}: {resp.text}")
-            
-            data = resp.json()
-            vec = data["data"][0]["embedding"]
-            if len(vec) != self.expected_dim:
+        payload = {"model": self.embed_model, "input": clean_inputs}
+        try:
+            async with httpx.AsyncClient(timeout=60.0) as client:
+                response = await client.post(url, json=payload)
+        except Exception as exc:
+            raise EmbeddingUnavailableError("Embedding provider is unreachable.") from exc
+
+        if response.status_code != 200:
+            raise EmbeddingUnavailableError(
+                f"Embedding provider returned status {response.status_code}."
+            )
+
+        data = response.json()
+        items = sorted(data.get("data", []), key=lambda item: item.get("index", 0))
+        if len(items) != len(clean_inputs):
+            raise ValueError(
+                f"Embedding count mismatch: requested {len(clean_inputs)}, received {len(items)}."
+            )
+
+        vectors = [item.get("embedding") or [] for item in items]
+        for vector in vectors:
+            if len(vector) != self.expected_dim:
                 raise ValueError(
-                    f"Embedding dimension mismatch: expected {self.expected_dim}, got {len(vec)}"
+                    f"Embedding dimension mismatch: expected {self.expected_dim}, got {len(vector)}."
                 )
-            return vec
+        return vectors
 
     async def generate_chat(
         self,
@@ -82,7 +106,7 @@ class AIProviderService:
         if response_format:
             payload["response_format"] = response_format
 
-        async with httpx.AsyncClient(timeout=60.0) as client:
+        async with httpx.AsyncClient(timeout=120.0) as client:
             resp = await client.post(url, json=payload)
             if resp.status_code != 200:
                 raise RuntimeError(f"LLM chat completion failed with status {resp.status_code}: {resp.text}")
@@ -96,3 +120,4 @@ class AIProviderService:
             return content.strip()
 
 ai_provider = AIProviderService()
+

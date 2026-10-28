@@ -3,6 +3,7 @@ from typing import List, Dict, Any, Optional
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 from app.core.ai_provider import ai_provider
+from app.core.config import settings
 
 class RetrievalService:
     async def hybrid_search(
@@ -28,17 +29,26 @@ class RetrievalService:
         doc_filter = "AND d.id = :doc_id" if document_id else ""
         params: Dict[str, Any] = {
             "owner_id": str(owner_id),
-            "top_k": top_k * 2
+            "top_k": top_k * 2,
+            "vec_str": vec_str,
+            "embedding_model": settings.EMBEDDING_MODEL,
+            "embedding_dim": settings.EMBEDDING_DIMENSION,
         }
         if document_id:
             params["doc_id"] = str(document_id)
 
         vector_sql = f"""
             SELECT c.id, c.document_id, c.page_start, c.page_end, c.heading_path, c.text,
-                   (c.embedding <=> '{vec_str}'::vector) as distance
+                   (c.embedding <=> cast(:vec_str as vector)) as distance
             FROM document_chunks c
             JOIN documents d ON c.document_id = d.id
             WHERE d.owner_id = :owner_id {doc_filter}
+              AND d.deleted_at IS NULL
+              AND d.status IN ('awaiting_review', 'ready')
+              AND c.embedding IS NOT NULL
+              AND c.embedding_model_id = :embedding_model
+              AND c.embedding_dimension = :embedding_dim
+              AND (c.embedding <=> cast(:vec_str as vector)) <= 0.45
             ORDER BY distance ASC
             LIMIT :top_k;
         """
@@ -52,6 +62,11 @@ class RetrievalService:
             FROM document_chunks c
             JOIN documents d ON c.document_id = d.id
             WHERE d.owner_id = :owner_id {doc_filter}
+              AND d.deleted_at IS NULL
+              AND d.status IN ('awaiting_review', 'ready')
+              AND c.embedding IS NOT NULL
+              AND c.embedding_model_id = :embedding_model
+              AND c.embedding_dimension = :embedding_dim
               AND c.search_text @@ plainto_tsquery('english', :query_text)
             ORDER BY fts_score DESC
             LIMIT :top_k;
@@ -105,3 +120,4 @@ class RetrievalService:
         }
 
 retrieval_service = RetrievalService()
+
