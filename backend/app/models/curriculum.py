@@ -57,7 +57,7 @@ class Resource(Base):
     edition = Column(String(50), nullable=True)
     resource_kind = Column(String(50), default="textbook")
     external_url = Column(String(500), nullable=True)
-    verification_status = Column(String(50), default="verified")
+    verification_status = Column(String(50), default="unverified")
 
 class ResourceRight(Base):
     __tablename__ = "resource_rights"
@@ -67,7 +67,7 @@ class ResourceRight(Base):
     license_name = Column(String(150), nullable=False)
     license_url = Column(String(500), nullable=True)
     rights_notes = Column(String(1000), nullable=True)
-    can_link = Column(Boolean, default=True)
+    can_link = Column(Boolean, default=False)
     can_download = Column(Boolean, default=False)
     can_store = Column(Boolean, default=False)
     can_process = Column(Boolean, default=False)
@@ -75,3 +75,4 @@ class ResourceRight(Base):
     can_offline_cache = Column(Boolean, default=False)
     can_redistribute = Column(Boolean, default=False)
     reviewed_at = Column(DateTime, default=datetime.datetime.utcnow)
+

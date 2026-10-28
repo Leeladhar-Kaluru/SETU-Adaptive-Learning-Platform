@@ -39,6 +39,14 @@ def migrated_database():
     cfg = Config(os.path.join(backend_dir, "alembic.ini"))
     cfg.set_main_option("script_location", os.path.join(backend_dir, "alembic"))
     command.upgrade(cfg, "head")
+    with engine.connect() as conn:
+        seeded = conn.execute(text("SELECT COUNT(*) FROM resources")).scalar_one()
+        seeded_rights = conn.execute(text("SELECT COUNT(*) FROM resource_rights")).scalar_one()
+    if seeded or seeded_rights:
+        raise RuntimeError(
+            f"Fresh migrations created {seeded} resources and {seeded_rights} rights rows. "
+            "Remove catalogue seeds from migrations 001 and 002."
+        )
     yield
 
 

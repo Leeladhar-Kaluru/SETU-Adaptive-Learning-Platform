@@ -376,24 +376,6 @@ def upgrade() -> None:
         ('lang-ur', 'ur-IN', 'اردو (Urdu)', 'Arabic', TRUE);
     """)
 
-    op.execute("""
-        INSERT INTO resource_sources (id, name, source_type, source_url, terms_url, verification_status, rights_notes) VALUES
-        ('ncert-portal', 'NCERT Online Textbooks', 'official_national_textbook_portal', 'https://ncert.nic.in/textbook.php', 'https://ncert.nic.in', 'verified', 'Official NCERT curriculum textbooks; educational use with page citation.');
-    """)
-
-    op.execute("""
-        INSERT INTO resources (id, source_id, title, board_id, grade, subject_id, language_id, publisher, edition, resource_kind, external_url) VALUES
-        ('res-ncert-sci-9', 'ncert-portal', 'NCERT Class 9 Science', 'board-ncert', 9, 'subject-science', 'lang-en', 'NCERT', '2024-25', 'textbook', 'https://ncert.nic.in/textbook.php?jesc1=0-15'),
-        ('res-ncert-math-9', 'ncert-portal', 'NCERT Class 9 Mathematics', 'board-ncert', 9, 'subject-math', 'lang-en', 'NCERT', '2024-25', 'textbook', 'https://ncert.nic.in/textbook.php?jemh1=0-15'),
-        ('res-ncert-sci-10', 'ncert-portal', 'NCERT Class 10 Science', 'board-ncert', 10, 'subject-science', 'lang-en', 'NCERT', '2024-25', 'textbook', 'https://ncert.nic.in/textbook.php?jesc2=0-16');
-    """)
-
-    op.execute("""
-        INSERT INTO resource_rights (id, resource_id, license_name, can_link, can_download, can_store, can_process, can_embed, can_offline_cache, can_redistribute) VALUES
-        ('rights-ncert-sci-9', 'res-ncert-sci-9', 'NCERT Educational Fair Use', TRUE, TRUE, TRUE, TRUE, TRUE, TRUE, FALSE),
-        ('rights-ncert-math-9', 'res-ncert-math-9', 'NCERT Educational Fair Use', TRUE, TRUE, TRUE, TRUE, TRUE, TRUE, FALSE),
-        ('rights-ncert-sci-10', 'res-ncert-sci-10', 'NCERT Educational Fair Use', TRUE, TRUE, TRUE, TRUE, TRUE, TRUE, FALSE);
-    """)
-
 def downgrade() -> None:
     pass
+
