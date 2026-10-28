@@ -10,6 +10,8 @@ from app.services.retrieval import retrieval_service
 from app.services.lesson_generator import lesson_generator_service
 from app.services.adaptive_engine import adaptive_engine
 
+pytestmark = pytest.mark.integration
+
 client = TestClient(app)
 
 @pytest.mark.asyncio
@@ -189,7 +191,8 @@ async def test_full_e2e_vertical_slice():
         }
 
         # First Sync Call
-        res1 = client.post("/api/v1/sync/doubts", json=sync_payload)
+        auth_headers = {"Authorization": f"Bearer test-token-{owner_uuid}"}
+        res1 = client.post("/api/v1/sync/doubts", json=sync_payload, headers=auth_headers)
         assert res1.status_code == 200
         data1 = res1.json()
         assert len(data1["results"]) == 1
@@ -198,7 +201,7 @@ async def test_full_e2e_vertical_slice():
         first_id = res1_obj["id"]
 
         # Second Sync Call with identical clientDoubtId (Idempotency Proof)
-        res2 = client.post("/api/v1/sync/doubts", json=sync_payload)
+        res2 = client.post("/api/v1/sync/doubts", json=sync_payload, headers=auth_headers)
         assert res2.status_code == 200
         data2 = res2.json()
         assert len(data2["results"]) == 1
