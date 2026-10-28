@@ -50,8 +50,11 @@ def test_outline_refuses_empty_extraction():
 
 def test_create_path_accepts_document_id_alias():
     document_id = uuid.uuid4()
-    req = CreatePathRequest.model_validate({"documentId": str(document_id), "grade": 8})
+    req = CreatePathRequest.model_validate(
+        {"documentId": str(document_id), "grade": 8, "subjectId": "subject-math"}
+    )
     assert req.document_id == document_id
+    assert req.subject_id == "subject-math"
 
 
 def test_signature_rejects_fake_pdf():

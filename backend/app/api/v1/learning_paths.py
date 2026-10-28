@@ -1,35 +1,34 @@
 import uuid
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, ConfigDict, Field
-from typing import Optional, List, Dict, Any
+from typing import Optional
 from sqlalchemy.orm import Session
+from app.core.config import settings
 from app.core.database import get_db
 from app.core.security import get_current_user_id
-from app.models.documents import Document, DocumentPage
+from app.models.curriculum import Subject
+from app.models.documents import Document, DocumentChunk, DocumentPage
 from app.models.learning import LearningPath, PathLesson, LessonVersion
-from app.models.jobs import GenerationJob
+from app.services.generation_queue import enqueue_lesson_generation
 from app.services.lesson_generator import lesson_generator_service
 
 router = APIRouter()
 
 class OutlineRequest(BaseModel):
-    document_id: Optional[uuid.UUID] = None
-    documentVersionId: Optional[uuid.UUID] = None
-    grade: Optional[int] = 9
-    subject_id: Optional[str] = "subject-science"
+    model_config = ConfigDict(populate_by_name=True)
+    document_id: uuid.UUID = Field(alias="documentId")
+    grade: int = Field(ge=6, le=10)
+    subject_id: str = Field(alias="subjectId", min_length=3)
+    language_tag: Optional[str] = None
 
 class CreatePathRequest(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
-
-    document_id: Optional[uuid.UUID] = Field(default=None, alias="documentId")
-    documentVersionId: Optional[uuid.UUID] = None
+    document_id: uuid.UUID = Field(alias="documentId")
+    grade: int = Field(ge=6, le=10)
+    subject_id: str = Field(alias="subjectId", min_length=3)
     title: Optional[str] = None
-    grade: Optional[int] = None
-    subject_id: Optional[str] = None
-    subject: Optional[str] = None
-    language_tag: str = "en-IN"
+    language_tag: Optional[str] = None
     goal: str = "concept_understanding"
-    outline: Optional[Dict[str, Any]] = None
 
 @router.post("/outline")
 async def generate_path_outline(
@@ -37,13 +36,15 @@ async def generate_path_outline(
     owner_id: uuid.UUID = Depends(get_current_user_id),
     db: Session = Depends(get_db)
 ):
-    doc_id = req.document_id or req.documentVersionId
-    if not doc_id:
-        raise HTTPException(status_code=400, detail="document_id or documentVersionId is required")
-
-    doc = db.query(Document).filter(Document.id == doc_id, Document.owner_id == owner_id).first()
+    doc = db.query(Document).filter(Document.id == req.document_id, Document.owner_id == owner_id).first()
     if not doc:
         raise HTTPException(status_code=404, detail="Document not found")
+
+    subject = db.query(Subject).filter(
+        Subject.id == req.subject_id, Subject.active == True
+    ).first()
+    if not subject:
+        raise HTTPException(status_code=422, detail="Choose a subject from the curriculum catalogue.")
 
     pages = db.query(DocumentPage).filter(DocumentPage.document_id == doc.id).order_by(DocumentPage.page_number.asc()).all()
     p_data = [{"page_number": p.page_number, "text": p.extracted_text} for p in pages]
@@ -51,8 +52,8 @@ async def generate_path_outline(
     outline = await lesson_generator_service.generate_outline(
         document_title=doc.original_filename,
         extracted_pages=p_data,
-        grade=req.grade or 9,
-        subject=req.subject_id or "SCIENCE"
+        grade=req.grade,
+        subject=req.subject_id,
     )
     return outline
 
@@ -68,11 +69,7 @@ async def create_learning_path(
     Generates the first validated lesson with priority, enqueuing subsequent lessons
     on the durable PostgreSQL background queue.
     """
-    doc_id = req.document_id or req.documentVersionId
-    if not doc_id:
-        raise HTTPException(status_code=400, detail="documentId is required. Upload a document before building a path.")
-
-    doc = db.query(Document).filter(Document.id == doc_id, Document.owner_id == owner_id).first()
+    doc = db.query(Document).filter(Document.id == req.document_id, Document.owner_id == owner_id).first()
     if not doc:
         raise HTTPException(status_code=404, detail="Document not found")
     if doc.status in ("failed", "needs_ocr"):
@@ -83,16 +80,44 @@ async def create_learning_path(
             detail=f"Document is not ready for a learning path (status: {doc.status}).",
         )
 
+    subject = db.query(Subject).filter(
+        Subject.id == req.subject_id, Subject.active == True
+    ).first()
+    if not subject:
+        raise HTTPException(status_code=422, detail="Choose a subject from the curriculum catalogue.")
+
+    indexed_chunks = db.query(DocumentChunk).filter(
+        DocumentChunk.document_id == doc.id,
+        DocumentChunk.embedding.isnot(None),
+        DocumentChunk.embedding_dimension == settings.EMBEDDING_DIMENSION,
+    ).count()
+    if indexed_chunks == 0:
+        raise HTTPException(
+            status_code=409,
+            detail="This document has no indexed text yet. Wait for processing to finish or retry it.",
+        )
+
+    existing = db.query(LearningPath).filter(
+        LearningPath.owner_id == owner_id,
+        LearningPath.document_id == doc.id,
+        LearningPath.grade == req.grade,
+        LearningPath.subject_id == req.subject_id,
+        LearningPath.status.in_(["active", "generating"]),
+    ).first()
+    if existing:
+        raise HTTPException(
+            status_code=409,
+            detail={"code": "path_exists", "pathId": str(existing.id), "message": "A learning path already exists for this document and class."},
+        )
+
     pages = db.query(DocumentPage).filter(DocumentPage.document_id == doc.id).order_by(DocumentPage.page_number.asc()).all()
     page_payload = [{"page_number": page.page_number, "text": page.extracted_text} for page in pages]
-    subject_val = doc.subject_id or req.subject_id or req.subject or "subject-general"
-    grade_val = doc.grade or req.grade or 0
     try:
         outline_data = lesson_generator_service.build_outline_from_pages(
             document_title=doc.original_filename,
             extracted_pages=page_payload,
-            grade=grade_val,
-            subject=subject_val,
+            grade=req.grade,
+            subject=req.subject_id,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -100,9 +125,9 @@ async def create_learning_path(
     path = LearningPath(
         owner_id=owner_id,
         document_id=doc.id,
-        grade=grade_val,
-        subject_id=subject_val,
-        language_tag=doc.language_tag or req.language_tag,
+        grade=req.grade,
+        subject_id=req.subject_id,
+        language_tag=req.language_tag or doc.language_tag,
         goal=req.goal,
         status="generating",
         outline_json=outline_data,
@@ -113,7 +138,7 @@ async def create_learning_path(
 
     chapters = outline_data.get("chapters", [])
     seq = 1
-    first_lesson = None
+    created_lessons = []
     for chapter in chapters:
         lesson_title = chapter.get("chapterTitle") or f"Section {seq}"
         plesson = PathLesson(
@@ -125,34 +150,22 @@ async def create_learning_path(
         )
         db.add(plesson)
         db.flush()
-        if first_lesson is None:
-            first_lesson = plesson
-        priority = seq if seq <= 2 else 20 + seq
-        db.add(
-            GenerationJob(
-                job_type="generate_lesson",
-                owner_id=owner_id,
-                path_id=path.id,
-                lesson_id=plesson.id,
-                priority=priority,
-                status="queued",
-                idempotency_key=f"gen_{path.id}_{plesson.id}_v1",
-            )
-        )
+        created_lessons.append(plesson)
         seq += 1
 
-    if not first_lesson:
+    if not created_lessons:
         db.rollback()
         raise HTTPException(status_code=400, detail="No sections could be read from this document.")
 
-    db.commit()
+    first_lesson = created_lessons[0]
+    enqueue_lesson_generation(db, owner_id=owner_id, path=path, lessons=created_lessons)
 
     return {
         "pathId": str(path.id),
         "id": str(path.id),
         "firstLessonId": str(first_lesson.id),
         "lessonKey": first_lesson.lesson_key,
-        "totalLessons": seq - 1,
+        "totalLessons": len(created_lessons),
         "title": outline_data.get("title", doc.original_filename),
         "status": path.status,
     }
