@@ -1,53 +1,126 @@
-import uuid
 import hashlib
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, status
+import uuid
 from typing import Optional
+
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
+from fastapi.responses import FileResponse
+import os
 from sqlalchemy.orm import Session
-from app.core.database import get_db
+
 from app.core.config import settings
+from app.core.database import get_db
 from app.core.security import get_current_user_id
 from app.core.storage import storage_service
-from app.core.ai_provider import ai_provider
-from app.models.documents import Document, DocumentPage, DocumentChunk
-from app.services.extraction import extraction_service
-from app.services.chunking import chunking_service
+from app.models.documents import Document, DocumentChunk, DocumentPage
+from app.services.lesson_generator import lesson_generator_service
 
 router = APIRouter()
+
+READY_FOR_REVIEW = {"awaiting_review", "ready"}
+
+
+def validate_file_signature(ext: str, content: bytes) -> None:
+    if not content:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="The file is empty.")
+    if ext == "pdf" and not content.startswith(b"%PDF"):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="This file does not look like a PDF.")
+    if ext in ("docx", "pptx") and not content.startswith(b"PK"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="This file does not look like an Office document.",
+        )
+    if ext == "png" and not content.startswith(b"\x89PNG"):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="This file does not look like a PNG.")
+    if ext in ("jpg", "jpeg") and not content.startswith(b"\xff\xd8"):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="This file does not look like a JPEG.")
+    if ext in ("txt", "md") and b"\x00" in content[:1024]:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="This text file looks binary.")
+
+
+def _document_payload(doc: Document, chunk_count: int = 0) -> dict:
+    return {
+        "id": str(doc.id),
+        "documentId": str(doc.id),
+        "versionId": str(doc.id),
+        "title": doc.original_filename.rsplit(".", 1)[0].replace("_", " "),
+        "filename": doc.original_filename,
+        "sizeBytes": doc.size_bytes,
+        "sizeMb": round((doc.size_bytes or 0) / (1024 * 1024), 2),
+        "pageCount": doc.page_count,
+        "chunkCount": chunk_count,
+        "status": doc.status,
+        "grade": doc.grade,
+        "subjectId": doc.subject_id,
+        "errorMessage": doc.safe_error_message,
+        "createdAt": doc.created_at.isoformat() if doc.created_at else None,
+    }
+
+
+def _chapters_for(doc: Document, pages: list) -> list:
+    if not pages:
+        return []
+    try:
+        outline = lesson_generator_service.build_outline_from_pages(
+            document_title=doc.original_filename,
+            extracted_pages=[{"page_number": p.page_number, "text": p.extracted_text} for p in pages],
+            grade=doc.grade or 0,
+            subject=doc.subject_id or "",
+        )
+    except ValueError:
+        return []
+    return [
+        {
+            "title": chapter.get("chapterTitle"),
+            "pageStart": chapter.get("pageStart"),
+            "pageEnd": chapter.get("pageEnd"),
+        }
+        for chapter in outline.get("chapters", [])
+    ]
+
 
 @router.post("/upload")
 async def upload_document(
     file: UploadFile = File(...),
-    grade: Optional[int] = Form(9),
-    subject_id: Optional[str] = Form("SCIENCE"),
+    grade: Optional[int] = Form(None),
+    subject_id: Optional[str] = Form(None),
     language_tag: Optional[str] = Form("en-IN"),
     owner_id: uuid.UUID = Depends(get_current_user_id),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
 ):
-    """
-    Multi-format document upload (PDF, DOCX, PPTX, TXT, MD, JPG, PNG) supporting up to 50MB.
-    Extracts pages, chunks, generates 768d embeddings, and indexes in PostgreSQL.
-    """
-    filename = file.filename or "upload.bin"
+    """Store the original file and return. Extraction runs on the background worker."""
+    filename = file.filename or "uploaded_document.bin"
     ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
     if ext not in settings.ALLOWED_EXTENSIONS:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Unsupported file format '{ext}'. Allowed: {', '.join(settings.ALLOWED_EXTENSIONS)}"
+            detail=f"Unsupported file format '{ext}'. Allowed: {', '.join(settings.ALLOWED_EXTENSIONS)}",
         )
 
-    # Read bytes and verify size limit (50MB)
     content = await file.read()
     size_bytes = len(content)
     if size_bytes > settings.MAX_UPLOAD_SIZE_BYTES:
         raise HTTPException(
             status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-            detail=f"File exceeds 50MB limit ({round(size_bytes / (1024 * 1024), 2)} MB provided)"
+            detail=f"File exceeds 50MB limit ({round(size_bytes / (1024 * 1024), 2)} MB provided)",
         )
+    validate_file_signature(ext, content)
 
     sha256_hash = hashlib.sha256(content).hexdigest()
-    storage_key = f"documents/{owner_id}/{uuid.uuid4()}/{filename}"
+    existing = (
+        db.query(Document)
+        .filter(
+            Document.owner_id == owner_id,
+            Document.sha256 == sha256_hash,
+            Document.deleted_at.is_(None),
+        )
+        .order_by(Document.created_at.desc())
+        .first()
+    )
+    if existing:
+        chunks_count = db.query(DocumentChunk).filter(DocumentChunk.document_id == existing.id).count()
+        return _document_payload(existing, chunks_count)
 
-    # 1. Create document record
+    storage_key = f"documents/{owner_id}/{uuid.uuid4()}/{filename}"
     doc = Document(
         owner_id=owner_id,
         source_mode="upload",
@@ -57,128 +130,47 @@ async def upload_document(
         mime_type=file.content_type or "application/octet-stream",
         size_bytes=size_bytes,
         sha256=sha256_hash,
-        language_tag=language_tag,
+        language_tag=language_tag or "en-IN",
         grade=grade,
         subject_id=subject_id,
-        status="uploading"
+        status="uploading",
+        attempt_count=0,
     )
     db.add(doc)
     db.commit()
     db.refresh(doc)
 
-    # 2. Upload file to private Supabase storage
     try:
         stored = await storage_service.upload_file(
             bucket=settings.STORAGE_BUCKET_DOCUMENTS,
             path=storage_key,
             content=content,
-            mime_type=doc.mime_type
+            mime_type=doc.mime_type,
         )
-        if stored:
-            doc.status = "stored"
-            db.commit()
-    except Exception as e:
-        print(f"Storage upload notice: {e}")
+    except Exception as exc:
+        stored = False
+        doc.safe_error_message = str(exc)[:400]
 
-    # 3. Extract text page-by-page
-    doc.status = "extracting"
-    db.commit()
-    
-    pages = extraction_service.extract_document(
-        file_bytes=content,
-        filename=filename,
-        mime_type=doc.mime_type
-    )
+    if not stored:
+        doc.status = "failed"
+        doc.error_code = "storage_failed"
+        if not doc.safe_error_message:
+            doc.safe_error_message = "The file could not be saved to private storage."
+        db.commit()
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=doc.safe_error_message)
 
-    doc.page_count = len(pages)
-    for p in pages:
-        dpage = DocumentPage(
-            document_id=doc.id,
-            page_number=p["page_number"],
-            extracted_text=p["text"],
-            char_count=p["char_count"],
-            word_count=p["word_count"],
-            is_scanned_ocr_needed=p["is_scanned_ocr_needed"],
-            extraction_quality=p["extraction_quality"],
-            parser_metadata=p.get("metadata")
-        )
-        db.add(dpage)
-    db.commit()
-
-    # 4. Chunk text
-    doc.status = "chunking"
-    db.commit()
-    chunks = chunking_service.create_chunks(pages)
-
-    # 5. Embed and index chunks
-    doc.status = "embedding"
-    db.commit()
-
-    for c in chunks:
-        # Get 768d embedding
-        try:
-            vec = await ai_provider.get_embedding(c["text"])
-        except Exception:
-            vec = [0.0] * settings.EMBEDDING_DIMENSION
-
-        dchunk = DocumentChunk(
-            document_id=doc.id,
-            page_start=c["page_start"],
-            page_end=c["page_end"],
-            heading_path=c["heading_path"],
-            chunk_index=c["chunk_index"],
-            text=c["text"],
-            text_hash=c["text_hash"],
-            language_tag=language_tag,
-            access_scope="private",
-            embedding_model_id=settings.EMBEDDING_MODEL,
-            embedding_dimension=settings.EMBEDDING_DIMENSION,
-            embedding=vec
-        )
-        db.add(dchunk)
-
-    doc.status = "ready"
+    doc.status = "stored"
+    doc.safe_error_message = None
     db.commit()
     db.refresh(doc)
+    return _document_payload(doc, 0)
 
-    return {
-        "id": str(doc.id),
-        "filename": doc.original_filename,
-        "sizeBytes": doc.size_bytes,
-        "sizeMb": round(doc.size_bytes / (1024 * 1024), 2),
-        "pageCount": doc.page_count,
-        "chunkCount": len(chunks),
-        "status": doc.status,
-        "grade": doc.grade,
-        "subjectId": doc.subject_id
-    }
 
-@router.get("")
-def list_user_documents(
-    owner_id: uuid.UUID = Depends(get_current_user_id),
-    db: Session = Depends(get_db)
-):
-    docs = db.query(Document).filter(Document.owner_id == owner_id).order_by(Document.created_at.desc()).all()
-    return [
-        {
-            "id": str(d.id),
-            "filename": d.original_filename,
-            "sizeBytes": d.size_bytes,
-            "sizeMb": round(d.size_bytes / (1024 * 1024), 2),
-            "pageCount": d.page_count,
-            "status": d.status,
-            "grade": d.grade,
-            "subjectId": d.subject_id,
-            "createdAt": d.created_at.isoformat()
-        }
-        for d in docs
-    ]
-
-@router.get("/{document_id}")
-def get_document_details(
+@router.get("/{document_id}/status")
+def get_document_status(
     document_id: uuid.UUID,
     owner_id: uuid.UUID = Depends(get_current_user_id),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
 ):
     doc = db.query(Document).filter(Document.id == document_id, Document.owner_id == owner_id).first()
     if not doc:
@@ -186,24 +178,96 @@ def get_document_details(
 
     pages = db.query(DocumentPage).filter(DocumentPage.document_id == doc.id).order_by(DocumentPage.page_number.asc()).all()
     chunks_count = db.query(DocumentChunk).filter(DocumentChunk.document_id == doc.id).count()
+    payload = _document_payload(doc, chunks_count)
+    payload["pages"] = [
+        {
+            "pageNumber": page.page_number,
+            "charCount": page.char_count,
+            "wordCount": page.word_count,
+            "preview": (page.extracted_text or "")[:200],
+        }
+        for page in pages[:10]
+    ]
+    payload["chapters"] = _chapters_for(doc, pages) if doc.status in READY_FOR_REVIEW else []
+    return payload
 
-    return {
-        "id": str(doc.id),
-        "filename": doc.original_filename,
-        "status": doc.status,
-        "pageCount": doc.page_count,
-        "chunkCount": chunks_count,
-        "sizeBytes": doc.size_bytes,
-        "grade": doc.grade,
-        "subjectId": doc.subject_id,
-        "pages": [
-            {
-                "pageNumber": p.page_number,
-                "charCount": p.char_count,
-                "wordCount": p.word_count,
-                "isScanned": p.is_scanned_ocr_needed,
-                "quality": p.extraction_quality
-            }
-            for p in pages
-        ]
-    }
+
+@router.post("/{document_id}/retry")
+def retry_document(
+    document_id: uuid.UUID,
+    owner_id: uuid.UUID = Depends(get_current_user_id),
+    db: Session = Depends(get_db),
+):
+    doc = db.query(Document).filter(Document.id == document_id, Document.owner_id == owner_id).first()
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found")
+    if doc.status not in ("failed", "needs_ocr"):
+        raise HTTPException(status_code=409, detail=f"Document cannot be retried from status {doc.status}.")
+
+    doc.status = "stored"
+    doc.safe_error_message = None
+    doc.error_code = None
+    doc.lease_owner = None
+    doc.lease_expires_at = None
+    doc.attempt_count = 0
+    db.commit()
+    return _document_payload(doc, 0)
+
+
+@router.get("")
+def list_user_documents(
+    owner_id: uuid.UUID = Depends(get_current_user_id),
+    db: Session = Depends(get_db),
+):
+    docs = (
+        db.query(Document)
+        .filter(Document.owner_id == owner_id, Document.deleted_at.is_(None))
+        .order_by(Document.created_at.desc())
+        .all()
+    )
+    return [_document_payload(doc) for doc in docs]
+
+
+@router.delete("/{document_id}")
+async def delete_document(
+    document_id: uuid.UUID,
+    owner_id: uuid.UUID = Depends(get_current_user_id),
+    db: Session = Depends(get_db),
+):
+    doc = db.query(Document).filter(Document.id == document_id, Document.owner_id == owner_id).first()
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found")
+
+    if doc.storage_key:
+        try:
+            await storage_service.delete_file(bucket=doc.storage_bucket, path=doc.storage_key)
+        except Exception:
+            pass
+
+    db.delete(doc)
+    db.commit()
+    return {"status": "deleted", "success": True, "documentId": str(document_id)}
+
+
+@router.get("/{document_id}/diagrams/{filename}")
+def get_extracted_diagram(
+    document_id: uuid.UUID,
+    filename: str,
+    owner_id: uuid.UUID = Depends(get_current_user_id),
+    db: Session = Depends(get_db),
+):
+    doc = db.query(Document).filter(
+        Document.id == document_id, Document.owner_id == owner_id
+    ).first()
+    if not doc:
+        raise HTTPException(status_code=404, detail="Diagram not found")
+
+    clean_name = os.path.basename(filename)
+    base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+    filepath = os.path.join(base_dir, "diagrams", str(document_id), clean_name)
+    if not os.path.exists(filepath):
+        raise HTTPException(status_code=404, detail="Diagram not found")
+    media_type = "image/png"
+    if clean_name.lower().endswith((".jpg", ".jpeg")):
+        media_type = "image/jpeg"
+    return FileResponse(filepath, media_type=media_type)

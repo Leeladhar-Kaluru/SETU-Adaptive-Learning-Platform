@@ -6,6 +6,7 @@ from pydantic import Field
 class Settings(BaseSettings):
     APP_NAME: str = "SETU"
     APP_ENV: str = "local"
+    SETU_TEST_AUTH: bool = False
     LOG_LEVEL: str = "INFO"
     API_V1_PREFIX: str = "/api/v1"
     FRONTEND_ORIGINS: str = "http://localhost:5173,http://127.0.0.1:5173"
@@ -38,3 +39,4 @@ class Settings(BaseSettings):
         return [origin.strip() for origin in self.FRONTEND_ORIGINS.split(",") if origin.strip()]
 
 settings = Settings()
+
