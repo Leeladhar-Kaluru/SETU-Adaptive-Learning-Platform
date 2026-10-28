@@ -1,0 +1,31 @@
+# Environment and Secrets
+**/.env
+**/.env.*
+!**/.env.example
+
+# Backups and Dumps
+**/backups/
+**/*.dump
+**/*.sql.bak
+**/*.bak
+
+# Python
+**/__pycache__/
+**/*.py[cod]
+*$py.class
+**/.pytest_cache/
+**/.venv/
+**/venv/
+**/*.egg-info/
+
+# Node & Build
+**/node_modules/
+**/dist/
+**/.vite/
+**/coverage/
+
+# OS & IDE
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
