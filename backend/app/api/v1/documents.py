@@ -179,14 +179,20 @@ def get_document_status(
     pages = db.query(DocumentPage).filter(DocumentPage.document_id == doc.id).order_by(DocumentPage.page_number.asc()).all()
     chunks_count = db.query(DocumentChunk).filter(DocumentChunk.document_id == doc.id).count()
     payload = _document_payload(doc, chunks_count)
+    pages_read = sum(1 for page in pages if (page.extracted_text or "").strip())
+    pages_needing_ocr = sum(1 for page in pages if page.is_scanned_ocr_needed)
+    payload["pagesRead"] = pages_read
+    payload["pagesNeedingOcr"] = pages_needing_ocr
     payload["pages"] = [
         {
             "pageNumber": page.page_number,
             "charCount": page.char_count,
             "wordCount": page.word_count,
-            "preview": (page.extracted_text or "")[:200],
+            "quality": page.extraction_quality,
+            "needsOcr": page.is_scanned_ocr_needed,
+            "preview": (page.extracted_text or "")[:120],
         }
-        for page in pages[:10]
+        for page in pages
     ]
     payload["chapters"] = _chapters_for(doc, pages) if doc.status in READY_FOR_REVIEW else []
     return payload
