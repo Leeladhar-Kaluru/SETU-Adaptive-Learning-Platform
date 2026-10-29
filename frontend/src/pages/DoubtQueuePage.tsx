@@ -3,29 +3,67 @@ import { useNavigate } from 'react-router-dom';
 import { ArrowLeft, RefreshCw, CheckCircle, Clock, FileSearch } from 'lucide-react';
 import { getAllDoubts, type OfflineDoubt } from '../db/indexedDB';
 import { syncManager } from '../services/syncManager';
+import { api } from '../services/api';
+import { useAuth } from '../context/AuthContext';
 
 export const DoubtQueuePage: React.FC = () => {
   const navigate = useNavigate();
+  const { user } = useAuth();
   const [doubts, setDoubts] = useState<OfflineDoubt[]>([]);
   const [isSyncing, setIsSyncing] = useState(false);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    loadDoubts();
+    void loadDoubts();
     const unsubscribe = syncManager.subscribe((syncing) => {
       setIsSyncing(syncing);
       if (!syncing) {
-        loadDoubts();
+        void loadDoubts();
       }
     });
     return unsubscribe;
-  }, []);
+  }, [user?.id]);
 
   const loadDoubts = async () => {
     setLoading(true);
-    const list = await getAllDoubts();
-    setDoubts(list);
-    setLoading(false);
+    if (!user) {
+      setDoubts([]);
+      setLoading(false);
+      return;
+    }
+    const localList = await getAllDoubts(user.id);
+    try {
+      const serverList = await api.listDoubts();
+      const serverMap = new Set(serverList.map((s) => s.clientDoubtId));
+
+      const serverFormatted: OfflineDoubt[] = serverList.map((s) => ({
+        clientDoubtId: s.clientDoubtId,
+        ownerId: user.id,
+        pathId: '',
+        questionText: s.questionText,
+        status: (s.status === 'answered' ? 'answered' : s.status === 'failed' ? 'failed' : 'queued') as any,
+        synced: true,
+        submittedAt: s.createdAt,
+        answerPayload: s.answerJson
+          ? {
+              answer: s.answerJson.answer || '',
+              citations: s.answerJson.citations || [],
+              answeredAt: s.answerJson.answeredAt || s.createdAt,
+            }
+          : undefined,
+      }));
+
+      // Combine server records with local un-synced outbox
+      const localOnly = localList.filter((l) => !serverMap.has(l.clientDoubtId));
+      const combined = [...serverFormatted, ...localOnly].sort(
+        (a, b) => new Date(b.submittedAt).getTime() - new Date(a.submittedAt).getTime()
+      );
+      setDoubts(combined);
+    } catch {
+      setDoubts(localList);
+    } finally {
+      setLoading(false);
+    }
   };
 
   const handleManualSync = async () => {
@@ -141,9 +179,11 @@ export const DoubtQueuePage: React.FC = () => {
                     <div style={{ marginTop: '12px', paddingTop: '8px', borderTop: '1px solid #D9DEEA', display: 'flex', alignItems: 'center', gap: '8px', fontSize: '12px', color: '#23795B' }}>
                       <FileSearch size={14} />
                       <span>
-                        Verified in source on{' '}
-                        {d.answerPayload.citations.map((c, i) => (
-                          <strong key={i}>Page {c.pageNumber} </strong>
+                        Verified in source:{' '}
+                        {d.answerPayload.citations.map((c: any, i: number) => (
+                          <strong key={i} style={{ marginRight: '6px' }}>
+                            Page {c.pageNumber || c.pageStart}{c.pageEnd && c.pageEnd !== (c.pageNumber || c.pageStart) ? `–${c.pageEnd}` : ''}
+                          </strong>
                         ))}
                       </span>
                     </div>
@@ -157,3 +197,4 @@ export const DoubtQueuePage: React.FC = () => {
     </div>
   );
 };
+

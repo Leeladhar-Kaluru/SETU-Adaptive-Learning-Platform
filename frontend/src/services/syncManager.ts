@@ -1,4 +1,6 @@
 import { db } from '../db/indexedDB';
+import { authHeaders } from './api';
+import { getActiveUserId } from './session';
 
 export type SyncStatusListener = (isSyncing: boolean, pendingCount: number) => void;
 
@@ -9,13 +11,12 @@ class SyncManager {
   constructor() {
     if (typeof window !== 'undefined') {
       window.addEventListener('online', () => {
-        console.log('[SETU SyncManager] Network online detected, triggering sync...');
-        this.syncPendingData();
+        void this.syncPendingData();
       });
 
       document.addEventListener('visibilitychange', () => {
         if (document.visibilityState === 'visible' && navigator.onLine) {
-          this.syncPendingData();
+          void this.syncPendingData();
         }
       });
     }
@@ -23,13 +24,30 @@ class SyncManager {
 
   public subscribe(listener: SyncStatusListener): () => void {
     this.listeners.add(listener);
-    this.notify();
+    void this.notify();
     return () => this.listeners.delete(listener);
   }
 
+  public async refreshPending(): Promise<void> {
+    await this.notify();
+  }
+
   private async notify() {
-    const pendingDoubts = await db.doubtOutbox.filter(d => !d.synced).count();
-    const pendingAttempts = await db.offlineAttempts.filter(a => !a.synced).count();
+    const ownerId = getActiveUserId();
+    if (!ownerId) {
+      for (const listener of this.listeners) listener(this.isSyncing, 0);
+      return;
+    }
+    const pendingDoubts = await db.doubtOutbox
+      .where('ownerId')
+      .equals(ownerId)
+      .and(doubt => !doubt.synced)
+      .count();
+    const pendingAttempts = await db.offlineAttempts
+      .where('ownerId')
+      .equals(ownerId)
+      .and(attempt => !attempt.synced)
+      .count();
     const totalPending = pendingDoubts + pendingAttempts;
     for (const listener of this.listeners) {
       listener(this.isSyncing, totalPending);
@@ -37,67 +55,85 @@ class SyncManager {
   }
 
   public async syncPendingData(): Promise<{ syncedDoubts: number; syncedAttempts: number }> {
-    if (this.isSyncing || !navigator.onLine) {
+    const ownerId = getActiveUserId();
+    if (!ownerId || this.isSyncing || !navigator.onLine) {
       return { syncedDoubts: 0, syncedAttempts: 0 };
     }
 
     this.isSyncing = true;
-    this.notify();
+    await this.notify();
 
     let syncedDoubts = 0;
     let syncedAttempts = 0;
+    const headers = { 'Content-Type': 'application/json', ...authHeaders() };
 
     try {
-      // 1. Sync Doubts
-      const pendingDoubts = await db.doubtOutbox.filter(d => !d.synced).toArray();
+      // 1. Sync doubts for this account.
+      const pendingDoubts = await db.doubtOutbox
+        .where('ownerId')
+        .equals(ownerId)
+        .and(doubt => !doubt.synced)
+        .toArray();
       if (pendingDoubts.length > 0) {
-        const doubtsPayload = pendingDoubts.map(d => ({
-          clientDoubtId: d.clientDoubtId,
-          pathId: d.pathId,
-          lessonVersionId: d.lessonVersionId,
-          blockId: d.blockId,
-          sourcePage: d.sourcePage,
-          questionText: d.questionText,
-          submittedAt: d.submittedAt
-        }));
-
         try {
           const res = await fetch('/api/v1/sync/doubts', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ doubts: doubtsPayload })
+            headers,
+            body: JSON.stringify({
+              doubts: pendingDoubts.map(doubt => ({
+                clientDoubtId: doubt.clientDoubtId,
+                pathId: doubt.pathId,
+                lessonVersionId: doubt.lessonVersionId,
+                blockId: doubt.blockId,
+                sourcePage: doubt.sourcePage,
+                questionText: doubt.questionText,
+                submittedAt: doubt.submittedAt,
+              })),
+            }),
           });
 
           if (res.ok) {
             const data = await res.json();
             const results: any[] = data.results || [];
-            
-            for (const r of results) {
-              const matching = pendingDoubts.find(d => d.clientDoubtId === r.clientDoubtId);
-              if (matching) {
-                const answerPayload = r.answer ? {
-                  answer: r.answer,
-                  citations: r.citations || [],
-                  answeredAt: r.answeredAt || new Date().toISOString()
-                } : undefined;
+            for (const result of results) {
+              const matching = pendingDoubts.find(
+                doubt => doubt.clientDoubtId === result.clientDoubtId
+              );
+              if (!matching) continue;
 
+              const answer = result.answerJson?.answer;
+              if (result.status === 'answered' && answer) {
+                const answeredAt =
+                  result.answerJson?.answeredAt || new Date().toISOString();
                 await db.doubtOutbox.update(matching.clientDoubtId, {
                   synced: true,
-                  status: r.status === 'answered' ? 'answered' : 'queued',
-                  answerPayload
+                  status: 'answered',
+                  lastError: undefined,
+                  answerPayload: {
+                    answer,
+                    citations: result.answerJson?.citations || [],
+                    answeredAt,
+                  },
                 });
-
-                if (answerPayload) {
-                  await db.cachedAnswers.put({
-                    clientDoubtId: matching.clientDoubtId,
-                    doubtId: r.id,
-                    questionText: matching.questionText,
-                    answer: answerPayload.answer,
-                    citations: answerPayload.citations,
-                    cachedAt: answerPayload.answeredAt
-                  });
-                }
-                syncedDoubts++;
+                await db.cachedAnswers.put({
+                  clientDoubtId: matching.clientDoubtId,
+                  ownerId,
+                  doubtId: result.id,
+                  questionText: matching.questionText,
+                  answer,
+                  citations: result.answerJson?.citations || [],
+                  cachedAt: answeredAt,
+                });
+                syncedDoubts += 1;
+              } else {
+                await db.doubtOutbox.update(matching.clientDoubtId, {
+                  synced: false,
+                  status: result.status === 'rejected' ? 'rejected' : 'needs_retry',
+                  lastError:
+                    result.answerJson?.message ||
+                    result.error ||
+                    'The tutor is unavailable. Try again.',
+                });
               }
             }
           }
@@ -106,37 +142,47 @@ class SyncManager {
         }
       }
 
-      // 2. Sync Quiz Attempts
-      const pendingAttempts = await db.offlineAttempts.filter(a => !a.synced).toArray();
-      if (pendingAttempts.length > 0) {
-        const eventsPayload = pendingAttempts.map(a => ({
-          eventId: a.clientAttemptId,
-          eventType: 'quiz_attempt',
-          payload: {
-            lessonId: a.lessonId,
-            lessonVersionId: a.lessonVersionId,
-            questionKey: a.questionKey,
-            response: a.response,
-            hintLevel: a.hintLevel,
-            hintsUsed: a.hintsUsed,
-            attemptKind: a.attemptKind,
-            elapsedSeconds: a.elapsedSeconds
-          },
-          timestamp: a.submittedAt
-        }));
-
+      // 2. Sync attempts one at a time so each idempotency key is applied once.
+      const pendingAttempts = await db.offlineAttempts
+        .where('ownerId')
+        .equals(ownerId)
+        .and(attempt => !attempt.synced)
+        .toArray();
+      for (const attempt of pendingAttempts) {
         try {
-          const res = await fetch('/api/v1/sync/events', {
+          const response = await fetch('/api/v1/attempts', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ events: eventsPayload })
+            headers,
+            body: JSON.stringify({
+              lessonVersionId: attempt.lessonVersionId,
+              questionKey: attempt.questionKey,
+              response: attempt.response,
+              hintLevel: attempt.hintLevel,
+              hintsUsed: attempt.hintsUsed,
+              elapsedSeconds: attempt.elapsedSeconds,
+              attemptKind: attempt.attemptKind,
+              syncIdempotencyKey: attempt.clientAttemptId,
+            }),
           });
 
-          if (res.ok) {
-            for (const a of pendingAttempts) {
-              await db.offlineAttempts.update(a.clientAttemptId, { synced: true });
-              syncedAttempts++;
-            }
+          if (response.ok) {
+            await db.offlineAttempts.update(attempt.clientAttemptId, {
+              synced: true,
+              syncError: undefined,
+            });
+            syncedAttempts += 1;
+          } else if (
+            response.status >= 400 &&
+            response.status < 500 &&
+            ![401, 429].includes(response.status)
+          ) {
+            const detail = await response.json().catch(() => ({}));
+            await db.offlineAttempts.update(attempt.clientAttemptId, {
+              syncError:
+                typeof detail.detail === 'string'
+                  ? detail.detail
+                  : `Rejected (${response.status})`,
+            });
           }
         } catch (err) {
           console.warn('[SETU SyncManager] Attempt sync error:', err);
@@ -144,7 +190,7 @@ class SyncManager {
       }
     } finally {
       this.isSyncing = false;
-      this.notify();
+      await this.notify();
     }
 
     return { syncedDoubts, syncedAttempts };

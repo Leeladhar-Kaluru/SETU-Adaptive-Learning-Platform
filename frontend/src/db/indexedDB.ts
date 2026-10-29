@@ -2,6 +2,7 @@ import Dexie, { type Table } from 'dexie';
 
 export interface OfflineLesson {
   lessonId: string;
+  ownerId: string;
   pathId: string;
   grade: number;
   subjectId: string;
@@ -21,6 +22,7 @@ export interface OfflineVisual {
 
 export interface OfflineAttempt {
   clientAttemptId: string;
+  ownerId: string;
   lessonId: string;
   lessonVersionId: string;
   questionKey: string;
@@ -31,18 +33,21 @@ export interface OfflineAttempt {
   elapsedSeconds: number;
   synced: boolean;
   submittedAt: string;
+  syncError?: string;
 }
 
 export interface OfflineDoubt {
   clientDoubtId: string;
+  ownerId: string;
   pathId: string;
   lessonVersionId?: string;
   blockId?: string;
   sourcePage?: number;
   questionText: string;
-  status: 'queued' | 'syncing' | 'answered' | 'failed';
+  status: 'queued' | 'syncing' | 'answered' | 'failed' | 'needs_retry' | 'rejected';
   synced: boolean;
   submittedAt: string;
+  lastError?: string;
   answerPayload?: {
     answer: string;
     citations: Array<{ citationId: string; pageNumber: number; snippet: string }>;
@@ -52,6 +57,7 @@ export interface OfflineDoubt {
 
 export interface CachedAnswer {
   clientDoubtId: string;
+  ownerId: string;
   doubtId?: string;
   questionText: string;
   answer: string;
@@ -85,22 +91,54 @@ export class SetuDatabase extends Dexie {
       cachedAnswers: 'clientDoubtId, doubtId, cachedAt',
       syncEvents: 'eventId, eventType, synced, timestamp'
     });
+    // Version 2 attributes every cached row to the signed-in account. Legacy
+    // rows have no owner and cannot be attributed safely, so they are cleared.
+    this.version(2).stores({
+      lessons: 'lessonId, ownerId, pathId, grade, subjectId, downloadedAt, lastAccessedAt',
+      offlineVisuals: 'visualId, lessonId, type',
+      offlineAttempts: 'clientAttemptId, ownerId, lessonId, questionKey, synced, submittedAt',
+      doubtOutbox: 'clientDoubtId, ownerId, pathId, status, synced, submittedAt',
+      cachedAnswers: 'clientDoubtId, ownerId, doubtId, cachedAt',
+      syncEvents: 'eventId, eventType, synced, timestamp'
+    }).upgrade(async (tx) => {
+      await tx.table('lessons').clear();
+      await tx.table('offlineVisuals').clear();
+      await tx.table('offlineAttempts').clear();
+      await tx.table('doubtOutbox').clear();
+      await tx.table('cachedAnswers').clear();
+      await tx.table('syncEvents').clear();
+    });
   }
 }
 
 export const db = new SetuDatabase();
 
+function requireOwnerId(ownerId: string): string {
+  if (!ownerId) throw new Error('Sign in before using offline data.');
+  return ownerId;
+}
+
 // Offline Lesson Helpers
-export async function saveLessonOffline(lessonPackage: any): Promise<void> {
+export async function saveLessonOffline(lessonPackage: any, ownerId: string): Promise<void> {
+  requireOwnerId(ownerId);
+  if (
+    !lessonPackage?.lessonId ||
+    !lessonPackage?.pathId ||
+    !lessonPackage?.grade ||
+    !lessonPackage?.subjectId
+  ) {
+    throw new Error('This lesson package is incomplete and cannot be saved offline.');
+  }
   const size = new Blob([JSON.stringify(lessonPackage)]).size;
   const now = new Date().toISOString();
 
   await db.transaction('rw', db.lessons, db.offlineVisuals, async () => {
     await db.lessons.put({
       lessonId: lessonPackage.lessonId,
-      pathId: lessonPackage.pathId || 'default-path',
-      grade: lessonPackage.grade || 8,
-      subjectId: lessonPackage.subjectId || 'GENERAL',
+      ownerId,
+      pathId: lessonPackage.pathId,
+      grade: lessonPackage.grade,
+      subjectId: lessonPackage.subjectId,
       title: lessonPackage.title,
       packageData: lessonPackage,
       downloadedAt: now,
@@ -123,46 +161,71 @@ export async function saveLessonOffline(lessonPackage: any): Promise<void> {
   });
 }
 
-export async function getOfflineLesson(lessonId: string): Promise<OfflineLesson | undefined> {
+export async function getOfflineLesson(
+  ownerId: string,
+  lessonId: string
+): Promise<OfflineLesson | undefined> {
   const lesson = await db.lessons.get(lessonId);
-  if (lesson) {
-    // Update lastAccessedAt
-    await db.lessons.update(lessonId, { lastAccessedAt: new Date().toISOString() });
-  }
+  if (!lesson || lesson.ownerId !== ownerId) return undefined;
+  await db.lessons.update(lessonId, { lastAccessedAt: new Date().toISOString() });
   return lesson;
 }
 
-export async function listOfflineLessons(): Promise<OfflineLesson[]> {
-  return await db.lessons.orderBy('downloadedAt').reverse().toArray();
+export async function listOfflineLessons(ownerId: string): Promise<OfflineLesson[]> {
+  const lessons = await db.lessons.where('ownerId').equals(ownerId).toArray();
+  return lessons.sort((a, b) => b.downloadedAt.localeCompare(a.downloadedAt));
 }
 
-export async function deleteOfflineLesson(lessonId: string): Promise<void> {
+export async function deleteOfflineLesson(ownerId: string, lessonId: string): Promise<void> {
+  const lesson = await db.lessons.get(lessonId);
+  if (!lesson || lesson.ownerId !== ownerId) return;
   await db.transaction('rw', db.lessons, db.offlineVisuals, async () => {
     await db.lessons.delete(lessonId);
     await db.offlineVisuals.where('lessonId').equals(lessonId).delete();
   });
 }
 
-export async function getOfflineStorageUsage(): Promise<{ count: number; totalBytes: number }> {
-  const allLessons = await db.lessons.toArray();
-  const totalBytes = allLessons.reduce((acc, l) => acc + (l.sizeBytes || 0), 0);
+export async function getOfflineStorageUsage(
+  ownerId: string
+): Promise<{ count: number; totalBytes: number }> {
+  const lessons = await db.lessons.where('ownerId').equals(ownerId).toArray();
   return {
-    count: allLessons.length,
-    totalBytes
+    count: lessons.length,
+    totalBytes: lessons.reduce((sum, lesson) => sum + (lesson.sizeBytes || 0), 0)
   };
+}
+
+export async function clearOfflineData(): Promise<void> {
+  await db.transaction(
+    'rw',
+    [db.lessons, db.offlineVisuals, db.offlineAttempts, db.doubtOutbox, db.cachedAnswers, db.syncEvents],
+    async () => {
+      await Promise.all([
+        db.lessons.clear(),
+        db.offlineVisuals.clear(),
+        db.offlineAttempts.clear(),
+        db.doubtOutbox.clear(),
+        db.cachedAnswers.clear(),
+        db.syncEvents.clear(),
+      ]);
+    }
+  );
 }
 
 // Offline Doubt Outbox Helpers
 export async function queueDoubtOffline(params: {
   clientDoubtId: string;
+  ownerId: string;
   pathId: string;
   lessonVersionId?: string;
   blockId?: string;
   sourcePage?: number;
   questionText: string;
 }): Promise<OfflineDoubt> {
+  requireOwnerId(params.ownerId);
   const doubtRecord: OfflineDoubt = {
     clientDoubtId: params.clientDoubtId,
+    ownerId: params.ownerId,
     pathId: params.pathId,
     lessonVersionId: params.lessonVersionId,
     blockId: params.blockId,
@@ -176,17 +239,23 @@ export async function queueDoubtOffline(params: {
   return doubtRecord;
 }
 
-export async function listPendingDoubts(): Promise<OfflineDoubt[]> {
-  return await db.doubtOutbox.where('synced').equals(0).toArray(); // Dexie boolean false is stored as 0 or boolean
+export async function listPendingDoubts(ownerId: string): Promise<OfflineDoubt[]> {
+  return db.doubtOutbox
+    .where('ownerId')
+    .equals(ownerId)
+    .and(doubt => !doubt.synced)
+    .toArray();
 }
 
-export async function getAllDoubts(): Promise<OfflineDoubt[]> {
-  return await db.doubtOutbox.orderBy('submittedAt').reverse().toArray();
+export async function getAllDoubts(ownerId: string): Promise<OfflineDoubt[]> {
+  const doubts = await db.doubtOutbox.where('ownerId').equals(ownerId).toArray();
+  return doubts.sort((a, b) => b.submittedAt.localeCompare(a.submittedAt));
 }
 
 // Offline Attempt Helpers
 export async function queueAttemptOffline(params: {
   clientAttemptId: string;
+  ownerId: string;
   lessonId: string;
   lessonVersionId: string;
   questionKey: string;
@@ -196,6 +265,7 @@ export async function queueAttemptOffline(params: {
   attemptKind: 'practice' | 'checkpoint';
   elapsedSeconds: number;
 }): Promise<void> {
+  requireOwnerId(params.ownerId);
   const attemptRecord: OfflineAttempt = {
     ...params,
     synced: false,
@@ -203,4 +273,3 @@ export async function queueAttemptOffline(params: {
   };
   await db.offlineAttempts.put(attemptRecord);
 }
-

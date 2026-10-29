@@ -4,6 +4,8 @@ import { Download, Check, HelpCircle, X, ChevronRight, FileSearch, ArrowLeft, Re
 import { VisualRenderer } from '../components/visuals/VisualRenderer';
 import { db, saveLessonOffline, getOfflineLesson, queueDoubtOffline, queueAttemptOffline } from '../db/indexedDB';
 import { api, type AttemptResult, type AttemptSubmission } from '../services/api';
+import { useAuth } from '../context/AuthContext';
+import { syncManager } from '../services/syncManager';
 import styles from './LessonReaderPage.module.css';
 
 export const LessonReaderPage: React.FC = () => {
@@ -11,6 +13,7 @@ export const LessonReaderPage: React.FC = () => {
   const [searchParams] = useSearchParams();
   const pathId = searchParams.get('pathId') || '';
   const navigate = useNavigate();
+  const { user } = useAuth();
 
   const [activeTab, setActiveTab] = useState<'learn' | 'solve' | 'test'>('learn');
   const [lessonPackage, setLessonPackage] = useState<any | null>(null);
@@ -78,7 +81,7 @@ export const LessonReaderPage: React.FC = () => {
       return;
     }
     if (!quiet) setLoading(true);
-    const offlineCopy = await getOfflineLesson(lessonId);
+    const offlineCopy = user ? await getOfflineLesson(user.id, lessonId) : undefined;
     if (offlineCopy) {
       setLessonPackage(offlineCopy.packageData);
       setIsSavedOffline(true);
@@ -126,10 +129,10 @@ export const LessonReaderPage: React.FC = () => {
   }, [flushReadingTime]);
 
   const handleSaveOffline = async () => {
-    if (!lessonPackage) return;
+    if (!lessonPackage || !user) return;
     setSavingOffline(true);
     try {
-      await saveLessonOffline(lessonPackage);
+      await saveLessonOffline(lessonPackage, user.id);
       setIsSavedOffline(true);
     } catch (err) {
       console.error('Failed to save offline:', err);
@@ -147,6 +150,10 @@ export const LessonReaderPage: React.FC = () => {
 
   const handleAskDoubt = async () => {
     if (!doubtText.trim() || !lessonPackage) return;
+    if (!user) {
+      setDoubtResponse({ status: 'failed', message: 'Sign in to ask a doubt.' });
+      return;
+    }
     setSubmittingDoubt(true);
     setDoubtResponse(null);
 
@@ -162,7 +169,8 @@ export const LessonReaderPage: React.FC = () => {
     };
 
     if (!navigator.onLine) {
-      await queueDoubtOffline(payload);
+      await queueDoubtOffline({ ...payload, ownerId: user.id });
+      await syncManager.refreshPending();
       setDoubtResponse({
         status: 'queued',
         message: 'You are offline. Your doubt has been safely stored in your offline queue and will sync automatically upon reconnection.'
@@ -178,6 +186,7 @@ export const LessonReaderPage: React.FC = () => {
       if (answerPayload && res.status === 'answered' && answerPayload.answer) {
         await db.doubtOutbox.put({
           clientDoubtId,
+          ownerId: user.id,
           pathId: payload.pathId,
           blockId: payload.blockId,
           sourcePage: payload.sourcePage,
@@ -194,6 +203,7 @@ export const LessonReaderPage: React.FC = () => {
 
         await db.cachedAnswers.put({
           clientDoubtId,
+          ownerId: user.id,
           doubtId: res.id,
           questionText: payload.questionText,
           answer: answerPayload.answer,
@@ -215,7 +225,8 @@ export const LessonReaderPage: React.FC = () => {
     } catch (err: any) {
       const networkFailure = err instanceof TypeError || !navigator.onLine;
       if (networkFailure) {
-        await queueDoubtOffline(payload);
+        await queueDoubtOffline({ ...payload, ownerId: user.id });
+        await syncManager.refreshPending();
         setDoubtResponse({
           status: 'queued',
           message: 'The request did not reach SETU. It is saved offline and will sync when you reconnect.'
@@ -239,7 +250,7 @@ export const LessonReaderPage: React.FC = () => {
 
   const handlePracticeSubmit = async (q: any) => {
     const selected = practiceAnswers[q.questionId];
-    if (!selected || !lessonPackage?.lessonVersionId) return;
+    if (!selected || !lessonPackage?.lessonVersionId || !user) return;
 
     const startedAt = questionStartedAt.current[q.questionId] || Date.now();
     const elapsedSeconds = Math.max(0, Math.min(1800, Math.round((Date.now() - startedAt) / 1000)));
@@ -264,6 +275,7 @@ export const LessonReaderPage: React.FC = () => {
       if (!navigator.onLine) {
         await queueAttemptOffline({
           clientAttemptId: payload.syncIdempotencyKey!,
+          ownerId: user.id,
           lessonId,
           lessonVersionId: payload.lessonVersionId,
           questionKey: payload.questionKey,
@@ -273,6 +285,7 @@ export const LessonReaderPage: React.FC = () => {
           attemptKind: payload.attemptKind || 'practice',
           elapsedSeconds: payload.elapsedSeconds || 0,
         });
+        await syncManager.refreshPending();
         setAttemptErrors(prev => ({
           ...prev,
           [q.questionId]: 'Saved offline. This answer will be graded when you reconnect.',
@@ -300,7 +313,7 @@ export const LessonReaderPage: React.FC = () => {
   };
 
   const handleTestSubmit = async () => {
-    if (!lessonPackage?.checkpointTest?.length || !lessonPackage.lessonVersionId) return;
+    if (!lessonPackage?.checkpointTest?.length || !lessonPackage.lessonVersionId || !user) return;
     setTestSubmitted(true);
     const results: AttemptResult[] = [];
     let queuedOffline = false;
@@ -328,6 +341,7 @@ export const LessonReaderPage: React.FC = () => {
         if (!navigator.onLine) {
           await queueAttemptOffline({
             clientAttemptId: payload.syncIdempotencyKey!,
+            ownerId: user.id,
             lessonId,
             lessonVersionId: payload.lessonVersionId,
             questionKey: payload.questionKey,
@@ -337,6 +351,7 @@ export const LessonReaderPage: React.FC = () => {
             attemptKind: 'checkpoint',
             elapsedSeconds,
           });
+          await syncManager.refreshPending();
           queuedOffline = true;
         } else {
           setCheckpointResult({

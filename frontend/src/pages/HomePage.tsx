@@ -324,8 +324,9 @@ export const HomePage: React.FC = () => {
   ];
 
   const downloadLesson = async (lessonId: string) => {
+    if (!user) return;
     const pkg = await api.getLesson(lessonId);
-    await saveLessonOffline(pkg);
+    await saveLessonOffline(pkg, user.id);
   };
 
   const subjectLabel = (value: string) => {

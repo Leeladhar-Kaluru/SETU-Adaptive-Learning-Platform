@@ -197,7 +197,7 @@ export interface AttemptResult {
   alreadyRecorded: boolean;
 }
 
-function getAuthHeader(): Record<string, string> {
+export function authHeaders(): Record<string, string> {
   const token = localStorage.getItem('setu_auth_token');
   return token ? { Authorization: `Bearer ${token}` } : {};
 }
@@ -205,7 +205,7 @@ function getAuthHeader(): Record<string, string> {
 async function request<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
   const headers = {
     'Content-Type': 'application/json',
-    ...getAuthHeader(),
+    ...authHeaders(),
     ...(options.headers || {})
   };
 

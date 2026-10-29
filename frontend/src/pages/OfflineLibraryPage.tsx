@@ -2,28 +2,37 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { HardDrive, Trash2, BookOpen, ArrowLeft } from 'lucide-react';
 import { listOfflineLessons, deleteOfflineLesson, getOfflineStorageUsage, type OfflineLesson } from '../db/indexedDB';
+import { useAuth } from '../context/AuthContext';
 
 export const OfflineLibraryPage: React.FC = () => {
   const navigate = useNavigate();
+  const { user } = useAuth();
   const [lessons, setLessons] = useState<OfflineLesson[]>([]);
   const [usage, setUsage] = useState<{ count: number; totalBytes: number }>({ count: 0, totalBytes: 0 });
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    loadOfflineData();
-  }, []);
+    void loadOfflineData();
+  }, [user?.id]);
 
   const loadOfflineData = async () => {
     setLoading(true);
-    const offlineList = await listOfflineLessons();
-    const storageUsage = await getOfflineStorageUsage();
+    if (!user) {
+      setLessons([]);
+      setUsage({ count: 0, totalBytes: 0 });
+      setLoading(false);
+      return;
+    }
+    const offlineList = await listOfflineLessons(user.id);
+    const storageUsage = await getOfflineStorageUsage(user.id);
     setLessons(offlineList);
     setUsage(storageUsage);
     setLoading(false);
   };
 
   const handleDelete = async (lessonId: string) => {
-    await deleteOfflineLesson(lessonId);
+    if (!user) return;
+    await deleteOfflineLesson(user.id, lessonId);
     await loadOfflineData();
   };
 
@@ -130,3 +139,4 @@ export const OfflineLibraryPage: React.FC = () => {
     </div>
   );
 };
+
