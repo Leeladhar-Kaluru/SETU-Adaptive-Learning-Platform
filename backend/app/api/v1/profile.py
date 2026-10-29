@@ -31,14 +31,6 @@ class ProfileUpdateRequest(BaseModel):
     onboardingCompleted: Optional[bool] = None
     tourCompleted: Optional[bool] = None
 
-class StudyEventLogRequest(BaseModel):
-    lessonId: Optional[str] = None
-    lessonTitle: Optional[str] = None
-    pathId: Optional[str] = None
-    seconds: int = 60
-    eventType: str = "lesson_read"
-    score: Optional[float] = None
-
 @router.get("/dashboard")
 async def get_student_dashboard(
     user_id: uuid.UUID = Depends(get_current_user_id),
@@ -56,17 +48,7 @@ async def get_student_dashboard(
     """
     profile = db.query(UserProfile).filter(UserProfile.id == user_id).first()
     if not profile:
-        profile = UserProfile(
-            id=user_id,
-            display_name="Student",
-            role="student",
-            grade=10,
-            preferred_language="en-IN",
-            board_id="board-cbse"
-        )
-        db.add(profile)
-        db.commit()
-        db.refresh(profile)
+        raise HTTPException(status_code=404, detail="Profile not found. Complete signup or onboarding.")
 
     now = datetime.datetime.now(datetime.timezone.utc)
     today = now.date()
@@ -76,7 +58,9 @@ async def get_student_dashboard(
         StudyEvent.owner_id == user_id
     ).order_by(StudyEvent.occurred_at.asc()).all()
 
-    # 2. Build 84-day activity heatmap (12 weeks)
+    # 2. Build 84-day activity heatmap (12 weeks) from study events only.
+    # Quiz attempts already write a StudyEvent, so adding attempt time here
+    # would count the same minutes twice.
     start_date = today - datetime.timedelta(days=83)
     daily_stats: Dict[str, Dict[str, Any]] = {}
     
@@ -104,18 +88,9 @@ async def get_student_dashboard(
             daily_stats[d_str]["seconds"] += (ev.seconds or 0)
             daily_stats[d_str]["count"] += 1
 
-    # Also include quiz attempts in activity
     attempts = db.query(QuizAttempt).filter(
         QuizAttempt.owner_id == user_id
     ).order_by(QuizAttempt.occurred_at.desc()).all()
-
-    for att in attempts:
-        att_date = att.occurred_at.date() if att.occurred_at else today
-        active_days_set.add(att_date)
-        d_str = att_date.isoformat()
-        if d_str in daily_stats:
-            daily_stats[d_str]["seconds"] += (att.elapsed_seconds or 30)
-            daily_stats[d_str]["count"] += 1
 
     # Assign heatmap intensity levels (0 = 0m, 1 = 1-15m, 2 = 16-30m, 3 = 31-45m, 4 = 45m+)
     heatmap_list = []
@@ -199,7 +174,7 @@ async def get_student_dashboard(
             "score": att.score,
             "isCorrect": att.is_correct,
             "hintsUsed": len(att.hints_used or []),
-            "elapsedSeconds": att.elapsed_seconds,
+            "elapsedSeconds": att.elapsed_seconds if att.elapsed_seconds is not None else 0,
             "occurredAt": att.occurred_at.isoformat() if att.occurred_at else None
         })
 
@@ -233,13 +208,16 @@ async def get_student_dashboard(
             "subjectsInterested": profile.subjects_interested or [],
             "learningGoals": profile.learning_goals or [],
             "dailyGoalMinutes": profile.daily_goal_minutes,
+            "academicContextComplete": bool(
+                profile.grade and profile.board_id and profile.preferred_language
+            ),
             "onboardingCompleted": profile.onboarding_completed
         },
         "stats": {
             "currentStreak": current_streak,
             "longestStreak": longest_streak,
             "totalMinutesStudied": round(total_study_seconds / 60, 1),
-            "totalSessions": len(events) + total_attempts,
+            "totalSessions": len(events),
             "averageAccuracy": avg_score,
             "totalQuestionsAttempted": total_attempts
         },
@@ -249,44 +227,6 @@ async def get_student_dashboard(
         "classrooms": classrooms_list
     }
 
-@router.post("/study-event")
-async def record_study_event(
-    req: StudyEventLogRequest,
-    user_id: uuid.UUID = Depends(get_current_user_id),
-    db: Session = Depends(get_db)
-):
-    """
-    Records a study event (e.g. reading a lesson, taking notes, practice time)
-    for activity tracking, streak calculation, and evidence tracking.
-    """
-    path_uuid = None
-    if req.pathId:
-        try:
-            path_uuid = uuid.UUID(req.pathId)
-        except Exception:
-            pass
-
-    event = StudyEvent(
-        owner_id=user_id,
-        path_id=path_uuid,
-        lesson_id=req.lessonId,
-        lesson_title=req.lessonTitle,
-        event_type=req.eventType,
-        seconds=max(req.seconds, 10),
-        score=req.score,
-        occurred_at=datetime.datetime.now(datetime.timezone.utc)
-    )
-    db.add(event)
-    db.commit()
-    db.refresh(event)
-
-    return {
-        "status": "recorded",
-        "id": str(event.id),
-        "seconds": event.seconds,
-        "occurredAt": event.occurred_at.isoformat()
-    }
-
 @router.get("")
 async def get_profile(
     user_id: uuid.UUID = Depends(get_current_user_id),
@@ -294,17 +234,7 @@ async def get_profile(
 ):
     profile = db.query(UserProfile).filter(UserProfile.id == user_id).first()
     if not profile:
-        profile = UserProfile(
-            id=user_id,
-            display_name="Student",
-            role="student",
-            grade=9,
-            preferred_language="en-IN",
-            board_id="board-cbse"
-        )
-        db.add(profile)
-        db.commit()
-        db.refresh(profile)
+        raise HTTPException(status_code=404, detail="Profile not found. Complete signup or onboarding.")
 
     return {
         "id": str(profile.id),
@@ -335,8 +265,7 @@ async def update_profile(
 ):
     profile = db.query(UserProfile).filter(UserProfile.id == user_id).first()
     if not profile:
-        profile = UserProfile(id=user_id, display_name="Student")
-        db.add(profile)
+        raise HTTPException(status_code=404, detail="Profile not found. Complete signup or onboarding.")
 
     if req.displayName is not None:
         profile.display_name = req.displayName.strip()

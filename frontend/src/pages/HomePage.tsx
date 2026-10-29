@@ -307,8 +307,15 @@ export const HomePage: React.FC = () => {
   const currentBook = materials.find((m) => m.documentId === selectedDocId) || materials[0];
   const plan = activePaths[0];
   const readyLesson = plan?.lessons?.find((lesson) => lesson.status === 'ready');
-  const pace = studySummary?.pace || user?.accessibilityPreferences?.pace || 'steady';
-  const paceLabel = pace === 'short' ? 'Short sessions' : pace === 'long' ? 'Longer sessions' : 'Steady pace';
+  const pace = studySummary?.pace || user?.accessibilityPreferences?.pace || null;
+  const paceLabel =
+    pace === 'short'
+      ? 'Short sessions'
+      : pace === 'long'
+        ? 'Longer sessions'
+        : pace === 'steady'
+          ? 'Steady pace'
+          : 'No pace set';
   const bookStatus = currentBook?.status || '';
   const phaseRank = ['uploading', 'stored', 'extracting', 'extracted', 'indexing', 'awaiting_review', 'ready'].indexOf(bookStatus);
   const firstUnitsReady = (plan?.lessons || []).filter((lesson) => lesson.sequence <= 2 && lesson.status === 'ready').length;

@@ -4,15 +4,16 @@ const API_BASE = '/api/v1';
 
 export interface UserProfileData {
   id: string;
-  email: string;
+  email: string | null;
   role: 'student' | 'teacher';
   displayName: string;
-  grade?: number;
-  boardId?: string;
-  preferredLanguage?: string;
+  grade?: number | null;
+  boardId?: string | null;
+  preferredLanguage?: string | null;
   subjectsInterested?: string[];
   learningGoals?: string[];
-  dailyGoalMinutes?: number;
+  dailyGoalMinutes?: number | null;
+  academicContextComplete?: boolean;
   accessibilityPreferences?: {
     font_size?: string;
     reduced_motion?: boolean;
@@ -21,6 +22,14 @@ export interface UserProfileData {
   };
   onboardingCompleted?: boolean;
   tourCompleted?: boolean;
+}
+
+export interface CatalogueBoard {
+  id: string;
+  code: string;
+  name: string;
+  region?: string | null;
+  officialUrl?: string | null;
 }
 
 export interface AuthResponse {
@@ -261,6 +270,10 @@ export const api = {
   },
 
   // Catalogue
+  async getBoards(): Promise<CatalogueBoard[]> {
+    return request<CatalogueBoard[]>('/catalogue/boards');
+  },
+
   async getCatalogue(params?: { query?: string; grade?: number; subjectId?: string; boardId?: string }): Promise<CatalogueResource[]> {
     const q = new URLSearchParams();
     if (params?.query) q.append('search', params.query);
@@ -422,11 +435,19 @@ export const api = {
     checkpointCount: number;
     accuracyRate: number | null;
     improvement: string;
-    pace: string;
-    dailyGoalMinutes: number;
+    pace: string | null;
+    dailyGoalMinutes: number | null;
     focus: string;
     heatmap: Array<{ date: string; seconds: number }>;
-    suggestions: Array<{ id: string; note: string; actionType: string }>;
+    suggestions: Array<{
+      id: string;
+      note: string;
+      actionType: string;
+      conceptId?: string | null;
+      status?: string;
+      explanation?: string | null;
+      teacherName?: string | null;
+    }>;
   }> {
     return request('/study/summary');
   },
