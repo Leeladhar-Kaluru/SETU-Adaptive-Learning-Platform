@@ -1,200 +1,347 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ArrowLeft, RefreshCw, CheckCircle, Clock, FileSearch } from 'lucide-react';
+import { ArrowLeft, RefreshCw, CheckCircle2, Clock, AlertTriangle, Ban, FileSearch } from 'lucide-react';
 import { getAllDoubts, type OfflineDoubt } from '../db/indexedDB';
 import { syncManager } from '../services/syncManager';
 import { api } from '../services/api';
 import { useAuth } from '../context/AuthContext';
+import styles from './DoubtQueuePage.module.css';
+
+type DoubtStatus = 'answered' | 'needs_retry' | 'rejected' | 'waiting';
+
+interface DoubtRow {
+  clientDoubtId: string;
+  questionText: string;
+  status: DoubtStatus;
+  submittedAt: string;
+  answer?: string;
+  citations: Array<{ citationId?: string; pageNumber?: number; pageStart?: number; pageEnd?: number; snippet?: string; excerpt?: string }>;
+  limitations?: string | null;
+  retryable: boolean;
+  errorMessage?: string;
+}
+
+const STATUS_LABEL: Record<DoubtStatus, string> = {
+  answered: 'Answered',
+  needs_retry: 'Needs retry',
+  rejected: 'Rejected',
+  waiting: 'Waiting to sync',
+};
+
+function toRow(local: OfflineDoubt): DoubtRow {
+  let status: DoubtStatus = 'waiting';
+  if (local.status === 'answered') status = 'answered';
+  else if (local.status === 'rejected') status = 'rejected';
+  else if (local.status === 'needs_retry' || local.status === 'failed') status = 'needs_retry';
+
+  return {
+    clientDoubtId: local.clientDoubtId,
+    questionText: local.questionText,
+    status,
+    submittedAt: local.submittedAt,
+    answer: local.answerPayload?.answer || undefined,
+    citations: local.answerPayload?.citations || [],
+    limitations: null,
+    retryable: status === 'needs_retry',
+    errorMessage: local.lastError,
+  };
+}
 
 export const DoubtQueuePage: React.FC = () => {
   const navigate = useNavigate();
   const { user } = useAuth();
-  const [doubts, setDoubts] = useState<OfflineDoubt[]>([]);
+  const [localDoubts, setLocalDoubts] = useState<OfflineDoubt[]>([]);
+  const [serverDoubts, setServerDoubts] = useState<DoubtRow[]>([]);
+  const [serverStatus, setServerStatus] = useState<{ state: 'loading' | 'ready' | 'error'; message?: string }>({
+    state: 'loading',
+  });
   const [isSyncing, setIsSyncing] = useState(false);
-  const [loading, setLoading] = useState(true);
+  const [retryingId, setRetryingId] = useState<string | null>(null);
+  const [retryErrors, setRetryErrors] = useState<Record<string, string>>({});
+
+  const loadLocal = async () => {
+    if (!user) {
+      setLocalDoubts([]);
+      return;
+    }
+    setLocalDoubts(await getAllDoubts(user.id));
+  };
+
+  const loadServer = async () => {
+    if (!user) return;
+    setServerStatus({ state: 'loading' });
+    try {
+      const list = await api.listDoubts();
+      setServerDoubts(
+        list.map((doubt) => {
+          const answered = doubt.status === 'answered' && Boolean(doubt.answerJson?.answer);
+          const status: DoubtStatus = answered
+            ? 'answered'
+            : doubt.status === 'rejected'
+              ? 'rejected'
+              : doubt.status === 'needs_retry'
+                ? 'needs_retry'
+                : 'waiting';
+          return {
+            clientDoubtId: doubt.clientDoubtId,
+            questionText: doubt.questionText,
+            status,
+            submittedAt: doubt.createdAt,
+            answer: doubt.answerJson?.answer || undefined,
+            citations: doubt.answerJson?.citations || [],
+            limitations: doubt.answerJson?.limitations ?? null,
+            retryable: status === 'needs_retry',
+            errorMessage: doubt.lastErrorCode || doubt.answerJson?.message || undefined,
+          };
+        })
+      );
+      setServerStatus({ state: 'ready' });
+    } catch (err: any) {
+      setServerStatus({
+        state: 'error',
+        message: err?.message || 'Doubt history could not be loaded from SETU.',
+      });
+    }
+  };
 
   useEffect(() => {
-    void loadDoubts();
+    void loadLocal();
+    void loadServer();
     const unsubscribe = syncManager.subscribe((syncing) => {
       setIsSyncing(syncing);
       if (!syncing) {
-        void loadDoubts();
+        void loadLocal();
+        void loadServer();
       }
     });
     return unsubscribe;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.id]);
 
-  const loadDoubts = async () => {
-    setLoading(true);
-    if (!user) {
-      setDoubts([]);
-      setLoading(false);
-      return;
+  const rows = useMemo(() => {
+    const serverMap = new Map(serverDoubts.map((row) => [row.clientDoubtId, row]));
+    const localRows = localDoubts.map(toRow);
+    const merged = localRows.map((row) => {
+      const server = serverMap.get(row.clientDoubtId);
+      if (!server) return row;
+      const localAnswered = row.status === 'answered';
+      return localAnswered ? row : server;
+    });
+    for (const server of serverDoubts) {
+      if (!merged.some((row) => row.clientDoubtId === server.clientDoubtId)) {
+        merged.push(server);
+      }
     }
-    const localList = await getAllDoubts(user.id);
-    try {
-      const serverList = await api.listDoubts();
-      const serverMap = new Set(serverList.map((s) => s.clientDoubtId));
-
-      const serverFormatted: OfflineDoubt[] = serverList.map((s) => ({
-        clientDoubtId: s.clientDoubtId,
-        ownerId: user.id,
-        pathId: '',
-        questionText: s.questionText,
-        status: (s.status === 'answered' ? 'answered' : s.status === 'failed' ? 'failed' : 'queued') as any,
-        synced: true,
-        submittedAt: s.createdAt,
-        answerPayload: s.answerJson
-          ? {
-              answer: s.answerJson.answer || '',
-              citations: s.answerJson.citations || [],
-              answeredAt: s.answerJson.answeredAt || s.createdAt,
-            }
-          : undefined,
-      }));
-
-      // Combine server records with local un-synced outbox
-      const localOnly = localList.filter((l) => !serverMap.has(l.clientDoubtId));
-      const combined = [...serverFormatted, ...localOnly].sort(
-        (a, b) => new Date(b.submittedAt).getTime() - new Date(a.submittedAt).getTime()
-      );
-      setDoubts(combined);
-    } catch {
-      setDoubts(localList);
-    } finally {
-      setLoading(false);
-    }
-  };
+    return merged.sort(
+      (a, b) => new Date(b.submittedAt).getTime() - new Date(a.submittedAt).getTime()
+    );
+  }, [localDoubts, serverDoubts]);
 
   const handleManualSync = async () => {
     await syncManager.syncPendingData();
-    await loadDoubts();
+    await loadLocal();
+    await loadServer();
+  };
+
+  const handleRetry = async (row: DoubtRow) => {
+    if (!user) return;
+    setRetryingId(row.clientDoubtId);
+    setRetryErrors((prev) => ({ ...prev, [row.clientDoubtId]: '' }));
+    try {
+      const res = await api.askDoubt({
+        clientDoubtId: row.clientDoubtId,
+        questionText: row.questionText,
+      });
+      if (res.status !== 'answered' || !res.answerJson?.answer) {
+        throw new Error(res.answerJson?.message || 'The tutor is still unavailable.');
+      }
+      setServerDoubts((prev) =>
+        prev.map((item) =>
+          item.clientDoubtId === row.clientDoubtId
+            ? {
+                ...item,
+                status: 'answered' as const,
+                retryable: false,
+                answer: res.answerJson.answer,
+                citations: res.answerJson.citations || [],
+                limitations: res.answerJson.limitations ?? null,
+                errorMessage: undefined,
+              }
+            : item
+        )
+      );
+      await loadLocal();
+    } catch (err: any) {
+      setRetryErrors((prev) => ({
+        ...prev,
+        [row.clientDoubtId]: err?.message || 'The tutor could not answer this yet.',
+      }));
+    } finally {
+      setRetryingId(null);
+    }
+  };
+
+  const statusClass = (status: DoubtStatus) =>
+    status === 'answered'
+      ? styles.statusAnswered
+      : status === 'needs_retry'
+        ? styles.statusRetry
+        : status === 'rejected'
+          ? styles.statusRejected
+          : styles.statusWaiting;
+
+  const statusIcon = (status: DoubtStatus) => {
+    if (status === 'answered') return <CheckCircle2 size={13} />;
+    if (status === 'needs_retry') return <AlertTriangle size={13} />;
+    if (status === 'rejected') return <Ban size={13} />;
+    return <Clock size={13} />;
   };
 
   return (
-    <div style={{ maxWidth: '1000px', margin: '0 auto', padding: '32px 24px', display: 'flex', flexDirection: 'column', gap: '24px' }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+    <div className={styles.page}>
+      <div className={styles.header}>
         <div>
-          <button onClick={() => navigate('/')} style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', color: '#4A5873', fontSize: '13px', marginBottom: '8px', cursor: 'pointer' }}>
+          <button type="button" className={styles.backLink} onClick={() => navigate('/')}>
             <ArrowLeft size={14} /> Back to Desk
           </button>
-          <h1 style={{ fontSize: '24px', fontWeight: 700, color: '#15233B' }}>Doubt Sync Queue</h1>
-          <p style={{ fontSize: '14px', color: '#4A5873' }}>
-            Questions asked during offline study are persisted locally in IndexedDB and resolved idempotently once connected.
+          <h1 className={styles.title}>Doubts</h1>
+          <p className={styles.lede}>
+            Every question you asked SETU, with its real state. Questions asked while the device was
+            offline are stored here until they can be answered.
           </p>
         </div>
 
         <button
-          onClick={handleManualSync}
+          type="button"
+          className={styles.syncButton}
+          onClick={() => void handleManualSync()}
           disabled={isSyncing}
-          style={{
-            display: 'inline-flex',
-            alignItems: 'center',
-            gap: '8px',
-            padding: '10px 18px',
-            background: '#4055D9',
-            color: '#FFFFFF',
-            borderRadius: '6px',
-            fontSize: '13px',
-            fontWeight: 600,
-            cursor: isSyncing ? 'not-allowed' : 'pointer'
-          }}
         >
-          <RefreshCw size={15} className={isSyncing ? 'spin' : ''} />
-          {isSyncing ? 'Syncing...' : 'Sync Queue Now'}
+          <RefreshCw size={15} className={isSyncing ? styles.spin : ''} />
+          {isSyncing ? 'Syncing…' : 'Sync now'}
         </button>
       </div>
 
-      {loading ? (
-        <div style={{ textAlign: 'center', padding: '40px', color: '#7E8B9F' }}>Checking queue...</div>
-      ) : doubts.length === 0 ? (
-        <div style={{ padding: '48px', textAlign: 'center', background: '#FFFFFF', border: '1px dashed #D9DEEA', borderRadius: '12px' }}>
-          <Clock size={40} color="#BDC8DA" style={{ marginBottom: '12px' }} />
-          <h3 style={{ fontSize: '16px', fontWeight: 700, color: '#15233B' }}>Doubt queue is empty</h3>
-          <p style={{ fontSize: '14px', color: '#7E8B9F', marginTop: '4px', maxWidth: '440px', margin: '4px auto 16px' }}>
-            When studying any lesson offline or online, use "Ask Doubt" or click "Ask Tutor" under any section to log questions.
+      {serverStatus.state === 'error' && (
+        <div className={styles.notice} role="status">
+          <strong>SETU could not be reached.</strong> Showing doubts stored on this device only.
+          <span className={styles.noticeDetail}>{serverStatus.message}</span>
+        </div>
+      )}
+
+      {serverStatus.state === 'loading' && rows.length === 0 && (
+        <div className={styles.skeleton} aria-label="Loading doubts">
+          <div className={styles.skeletonLine} />
+          <div className={styles.skeletonLine} />
+        </div>
+      )}
+
+      {serverStatus.state !== 'loading' && rows.length === 0 && (
+        <div className={styles.empty}>
+          <Clock size={36} color="#9AA6B8" />
+          <h2>No doubts yet.</h2>
+          <p>
+            Open a lesson and choose Ask a doubt. Answers cite the page of your uploaded material
+            they came from.
           </p>
-          <button
-            onClick={() => navigate('/')}
-            style={{ padding: '8px 16px', background: '#4055D9', color: '#FFFFFF', borderRadius: '6px', fontSize: '13px', fontWeight: 600 }}
-          >
-            Go to Desk
+          <button type="button" className={styles.primary} onClick={() => navigate('/')}>
+            Go to your desk
           </button>
         </div>
-      ) : (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-          {doubts.map(d => (
-            <div
-              key={d.clientDoubtId}
-              style={{
-                background: '#FFFFFF',
-                border: '1px solid #D9DEEA',
-                borderRadius: '10px',
-                padding: '20px',
-                boxShadow: '0 1px 3px rgba(0,0,0,0.04)',
-                display: 'flex',
-                flexDirection: 'column',
-                gap: '12px'
-              }}
-            >
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                <div>
-                  <span style={{ fontSize: '11px', fontWeight: 700, color: '#7E8B9F', textTransform: 'uppercase' }}>
-                    Client ID: {d.clientDoubtId} • Submitted: {new Date(d.submittedAt).toLocaleTimeString()}
-                  </span>
-                  <h3 style={{ fontSize: '16px', fontWeight: 700, color: '#15233B', marginTop: '4px' }}>
-                    "{d.questionText}"
-                  </h3>
-                </div>
+      )}
 
-                <span
-                  style={{
-                    display: 'inline-flex',
-                    alignItems: 'center',
-                    gap: '4px',
-                    padding: '4px 10px',
-                    borderRadius: '9999px',
-                    fontSize: '12px',
-                    fontWeight: 600,
-                    background: d.status === 'answered' ? '#E8F5F0' : '#FDF5EB',
-                    color: d.status === 'answered' ? '#23795B' : '#A65B12',
-                    border: `1px solid ${d.status === 'answered' ? '#A3D9C4' : '#F1CE9C'}`
-                  }}
-                >
-                  {d.status === 'answered' ? <CheckCircle size={13} /> : <Clock size={13} />}
-                  {d.status === 'answered' ? 'Answered' : 'Queued (Offline)'}
+      {rows.length > 0 && (
+        <ul className={styles.list}>
+          {rows.map((row) => (
+            <li key={row.clientDoubtId} className={styles.card}>
+              <div className={styles.cardHead}>
+                <div>
+                  <div className={styles.meta}>
+                    {new Date(row.submittedAt).toLocaleString()}
+                  </div>
+                  <h2 className={styles.question}>{row.questionText}</h2>
+                </div>
+                <span className={`${styles.status} ${statusClass(row.status)}`}>
+                  {statusIcon(row.status)} {STATUS_LABEL[row.status]}
                 </span>
               </div>
 
-              {d.answerPayload && (
-                <div style={{ padding: '16px', background: '#FAFAF8', borderRadius: '8px', border: '1px solid #D9DEEA' }}>
-                  <div style={{ fontSize: '12px', fontWeight: 700, color: '#4055D9', marginBottom: '6px' }}>
-                    VERIFIED TEXTBOOK ANSWER
-                  </div>
-                  <div style={{ fontSize: '14px', lineHeight: 1.6, color: '#15233B' }}>
-                    {d.answerPayload.answer}
-                  </div>
-
-                  {d.answerPayload.citations?.length > 0 && (
-                    <div style={{ marginTop: '12px', paddingTop: '8px', borderTop: '1px solid #D9DEEA', display: 'flex', alignItems: 'center', gap: '8px', fontSize: '12px', color: '#23795B' }}>
+              {row.status === 'answered' && row.answer && (
+                <div className={styles.answer}>
+                  <div className={styles.answerLabel}>Answer from your sources</div>
+                  <p className={styles.answerText}>{row.answer}</p>
+                  {row.limitations === 'insufficient_source_evidence' && (
+                    <p className={styles.limitation}>
+                      Your uploaded source did not contain enough verified evidence for a grounded
+                      answer.
+                    </p>
+                  )}
+                  {row.citations.length > 0 && (
+                    <div className={styles.citations}>
                       <FileSearch size={14} />
                       <span>
-                        Verified in source:{' '}
-                        {d.answerPayload.citations.map((c: any, i: number) => (
-                          <strong key={i} style={{ marginRight: '6px' }}>
-                            Page {c.pageNumber || c.pageStart}{c.pageEnd && c.pageEnd !== (c.pageNumber || c.pageStart) ? `–${c.pageEnd}` : ''}
-                          </strong>
-                        ))}
+                        Source page
+                        {row.citations.length > 1 ? 's' : ''}:{' '}
+                        {row.citations.map((citation, index) => {
+                          const start = citation.pageNumber ?? citation.pageStart;
+                          const end = citation.pageEnd;
+                          return (
+                            <strong key={citation.citationId || index}>
+                              {start}
+                              {end && end !== start ? `–${end}` : ''}
+                              {index < row.citations.length - 1 ? ', ' : ''}
+                            </strong>
+                          );
+                        })}
                       </span>
                     </div>
                   )}
                 </div>
               )}
-            </div>
+
+              {row.status === 'needs_retry' && (
+                <div className={styles.retryBox}>
+                  <p>
+                    The tutor could not answer this when you last asked. Your question is saved — you
+                    can retry it now.
+                  </p>
+                  {row.errorMessage && <p className={styles.errorDetail}>{row.errorMessage}</p>}
+                  {retryErrors[row.clientDoubtId] && (
+                    <p className={styles.errorDetail} role="alert">
+                      {retryErrors[row.clientDoubtId]}
+                    </p>
+                  )}
+                  <button
+                    type="button"
+                    className={styles.retryButton}
+                    onClick={() => void handleRetry(row)}
+                    disabled={retryingId === row.clientDoubtId || !navigator.onLine}
+                  >
+                    {retryingId === row.clientDoubtId
+                      ? 'Asking SETU…'
+                      : navigator.onLine
+                        ? 'Retry'
+                        : 'Retry when online'}
+                  </button>
+                </div>
+              )}
+
+              {row.status === 'waiting' && (
+                <p className={styles.waitingText}>
+                  Saved on this device. It will be sent when SETU is reachable.
+                </p>
+              )}
+
+              {row.status === 'rejected' && (
+                <p className={styles.rejectedText}>
+                  This question was rejected because it was empty or malformed. Ask it again from the
+                  lesson.
+                </p>
+              )}
+            </li>
           ))}
-        </div>
+        </ul>
       )}
     </div>
   );
 };
-

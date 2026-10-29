@@ -375,16 +375,14 @@ export const api = {
     status: string;
     questionText: string;
     answerJson?: any;
+    lastErrorCode?: string | null;
+    lessonVersionId?: string | null;
     sourcePage?: number;
     blockId?: string;
     createdAt: string;
   }>> {
-    try {
-      const res = await request<any>('/doubts');
-      return Array.isArray(res) ? res : res.doubts || [];
-    } catch {
-      return [];
-    }
+    const res = await request<any>('/doubts');
+    return Array.isArray(res) ? res : res.doubts || [];
   },
 
   // Teacher & Classrooms

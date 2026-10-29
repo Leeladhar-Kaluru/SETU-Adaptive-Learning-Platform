@@ -1,0 +1,364 @@
+.page {
+  max-width: 920px;
+  margin: 0 auto;
+  padding: 40px 24px 72px;
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+.header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 24px;
+  flex-wrap: wrap;
+}
+
+.backLink {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink-secondary);
+  padding: 4px 0;
+  border-radius: var(--radius-xs);
+}
+
+.backLink:hover {
+  color: var(--ink-primary);
+}
+
+.backLink:focus-visible {
+  outline: 2px solid var(--brand-primary);
+  outline-offset: 2px;
+}
+
+.title {
+  font-size: 30px;
+  line-height: 1.2;
+  letter-spacing: -0.02em;
+  font-weight: 700;
+  color: var(--ink-primary);
+  margin-top: 8px;
+}
+
+.lede {
+  margin-top: 8px;
+  max-width: 58ch;
+  font-size: 14px;
+  line-height: 1.6;
+  color: var(--ink-secondary);
+}
+
+.syncButton {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 44px;
+  padding: 0 18px;
+  background: var(--brand-primary);
+  color: var(--ink-inverted);
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+  font-weight: 600;
+  transition: background var(--transition-fast);
+}
+
+.syncButton:hover:not(:disabled) {
+  background: var(--brand-primary-hover);
+}
+
+.syncButton:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.syncButton:focus-visible {
+  outline: 2px solid var(--ink-primary);
+  outline-offset: 2px;
+}
+
+.spin {
+  animation: spin 900ms linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .spin {
+    animation: none;
+  }
+}
+
+.notice {
+  padding: 14px 18px;
+  border-radius: var(--radius-md);
+  background: var(--color-warning-subtle);
+  border: 1px solid var(--color-warning-border);
+  color: var(--ink-primary);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.noticeDetail {
+  display: block;
+  margin-top: 4px;
+  color: var(--ink-secondary);
+}
+
+.skeleton {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.skeletonLine {
+  height: 96px;
+  border-radius: var(--radius-md);
+  background: linear-gradient(90deg, var(--bg-subtle), var(--bg-surface-hover), var(--bg-subtle));
+  background-size: 200% 100%;
+  animation: shimmer 1.4s ease-in-out infinite;
+}
+
+@keyframes shimmer {
+  to {
+    background-position: -200% 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .skeletonLine {
+    animation: none;
+  }
+}
+
+.empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: 8px;
+  padding: 56px 24px;
+  background: var(--bg-surface);
+  border: 1px dashed var(--border-subtle);
+  border-radius: var(--radius-lg);
+}
+
+.empty h2 {
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--ink-primary);
+}
+
+.empty p {
+  max-width: 44ch;
+  font-size: 14px;
+  line-height: 1.6;
+  color: var(--ink-secondary);
+}
+
+.primary {
+  margin-top: 12px;
+  min-height: 44px;
+  padding: 0 20px;
+  border-radius: var(--radius-sm);
+  background: var(--brand-primary);
+  color: var(--ink-inverted);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.primary:hover {
+  background: var(--brand-primary-hover);
+}
+
+.list {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.card {
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  box-shadow: var(--shadow-sm);
+}
+
+.cardHead {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 16px;
+}
+
+.meta {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--ink-muted);
+}
+
+.question {
+  margin-top: 6px;
+  font-size: 16px;
+  line-height: 1.45;
+  font-weight: 600;
+  color: var(--ink-primary);
+}
+
+.status {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  flex-shrink: 0;
+  padding: 4px 10px;
+  border-radius: var(--radius-full);
+  font-size: 12px;
+  font-weight: 600;
+  border: 1px solid transparent;
+}
+
+.statusAnswered {
+  background: var(--color-success-subtle);
+  color: var(--color-success);
+  border-color: var(--color-success-border);
+}
+
+.statusRetry {
+  background: var(--color-warning-subtle);
+  color: var(--color-warning);
+  border-color: var(--color-warning-border);
+}
+
+.statusRejected {
+  background: var(--color-error-subtle);
+  color: var(--color-error);
+  border-color: var(--color-error-border);
+}
+
+.statusWaiting {
+  background: var(--bg-subtle);
+  color: var(--ink-secondary);
+  border-color: var(--border-subtle);
+}
+
+.answer {
+  padding: 16px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-surface-hover);
+  border: 1px solid var(--border-subtle);
+}
+
+.answerLabel {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--brand-primary);
+}
+
+.answerText {
+  margin-top: 8px;
+  font-size: 14px;
+  line-height: 1.65;
+  color: var(--ink-primary);
+  white-space: pre-wrap;
+}
+
+.limitation {
+  margin-top: 8px;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--color-warning);
+}
+
+.citations {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border-subtle);
+  font-size: 12px;
+  color: var(--color-success);
+}
+
+.retryBox {
+  padding: 14px 16px;
+  border-radius: var(--radius-sm);
+  background: var(--color-warning-subtle);
+  border: 1px solid var(--color-warning-border);
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--ink-primary);
+}
+
+.errorDetail {
+  margin-top: 6px;
+  color: var(--color-error);
+  font-size: 12px;
+}
+
+.retryButton {
+  margin-top: 12px;
+  min-height: 44px;
+  padding: 0 18px;
+  border-radius: var(--radius-sm);
+  background: var(--ink-primary);
+  color: var(--ink-inverted);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.retryButton:hover:not(:disabled) {
+  background: #24344f;
+}
+
+.retryButton:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.waitingText,
+.rejectedText {
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--ink-secondary);
+}
+
+.rejectedText {
+  color: var(--color-error);
+}
+
+@media (max-width: 640px) {
+  .page {
+    padding: 28px 16px 56px;
+  }
+
+  .title {
+    font-size: 24px;
+  }
+
+  .cardHead {
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .syncButton {
+    width: 100%;
+    justify-content: center;
+  }
+}

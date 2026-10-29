@@ -4,9 +4,6 @@ from app.core.database import SessionLocal
 from app.services.sync_service import sync_service
 from app.models.doubts import Doubt
 
-pytestmark = pytest.mark.skip(reason="provider failures become retryable in Task 12")
-
-
 @pytest.mark.asyncio
 async def test_idempotent_doubt_sync():
     db = SessionLocal()

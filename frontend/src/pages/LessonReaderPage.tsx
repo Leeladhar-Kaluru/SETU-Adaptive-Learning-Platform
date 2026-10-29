@@ -33,6 +33,7 @@ export const LessonReaderPage: React.FC = () => {
   const [doubtPage, setDoubtPage] = useState<number | undefined>(undefined);
   const [submittingDoubt, setSubmittingDoubt] = useState(false);
   const [doubtResponse, setDoubtResponse] = useState<any | null>(null);
+  const [lastDoubtPayload, setLastDoubtPayload] = useState<any | null>(null);
 
   // Practice & Test Interactive State
   const [practiceAnswers, setPracticeAnswers] = useState<Record<string, string>>({});
@@ -148,32 +149,21 @@ export const LessonReaderPage: React.FC = () => {
     setDoubtDrawerOpen(true);
   };
 
-  const handleAskDoubt = async () => {
-    if (!doubtText.trim() || !lessonPackage) return;
+  const submitDoubt = async (payload: any) => {
     if (!user) {
       setDoubtResponse({ status: 'failed', message: 'Sign in to ask a doubt.' });
       return;
     }
     setSubmittingDoubt(true);
     setDoubtResponse(null);
-
-    const clientDoubtId = 'doubt_' + Date.now();
-    const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-    const candidatePath = String(lessonPackage.pathId || pathId || '');
-    const payload = {
-      clientDoubtId,
-      pathId: uuidPattern.test(candidatePath) ? candidatePath : '',
-      blockId: doubtBlockId,
-      sourcePage: doubtPage,
-      questionText: doubtText
-    };
+    setLastDoubtPayload(payload);
 
     if (!navigator.onLine) {
       await queueDoubtOffline({ ...payload, ownerId: user.id });
       await syncManager.refreshPending();
       setDoubtResponse({
         status: 'queued',
-        message: 'You are offline. Your doubt has been safely stored in your offline queue and will sync automatically upon reconnection.'
+        message: 'You are offline. Your doubt is stored on this device and will sync when you reconnect.'
       });
       setSubmittingDoubt(false);
       return;
@@ -183,9 +173,9 @@ export const LessonReaderPage: React.FC = () => {
       const res = await api.askDoubt(payload);
       const answerPayload = res.answerJson;
 
-      if (answerPayload && res.status === 'answered' && answerPayload.answer) {
+      if (res.status === 'answered' && answerPayload?.answer) {
         await db.doubtOutbox.put({
-          clientDoubtId,
+          clientDoubtId: payload.clientDoubtId,
           ownerId: user.id,
           pathId: payload.pathId,
           blockId: payload.blockId,
@@ -202,7 +192,7 @@ export const LessonReaderPage: React.FC = () => {
         });
 
         await db.cachedAnswers.put({
-          clientDoubtId,
+          clientDoubtId: payload.clientDoubtId,
           ownerId: user.id,
           doubtId: res.id,
           questionText: payload.questionText,
@@ -214,32 +204,58 @@ export const LessonReaderPage: React.FC = () => {
         setDoubtResponse({
           status: 'answered',
           answer: answerPayload.answer,
-          citations: answerPayload.citations || []
+          citations: answerPayload.citations || [],
+          limitations: answerPayload.limitations || null
         });
       } else {
         setDoubtResponse({
           status: 'failed',
-          message: 'The model could not answer this yet. Try again when it is available.'
+          retryable: true,
+          message: answerPayload?.message || 'The tutor could not answer this yet. Try again.'
         });
       }
     } catch (err: any) {
-      const networkFailure = err instanceof TypeError || !navigator.onLine;
-      if (networkFailure) {
+      if (!navigator.onLine) {
         await queueDoubtOffline({ ...payload, ownerId: user.id });
         await syncManager.refreshPending();
         setDoubtResponse({
           status: 'queued',
-          message: 'The request did not reach SETU. It is saved offline and will sync when you reconnect.'
+          message: 'You are offline. Your doubt is stored on this device and will sync when you reconnect.'
+        });
+      } else if (err instanceof TypeError) {
+        setDoubtResponse({
+          status: 'failed',
+          retryable: true,
+          message: 'Could not reach SETU. Check your connection and try again.'
         });
       } else {
         setDoubtResponse({
           status: 'failed',
-          message: err?.message || 'The model could not answer this yet. Try again.'
+          retryable: true,
+          message: err?.message || 'The tutor could not answer this yet. Try again.'
         });
       }
     } finally {
       setSubmittingDoubt(false);
     }
+  };
+
+  const handleAskDoubt = async () => {
+    if (!doubtText.trim() || !lessonPackage) return;
+    if (!user) {
+      setDoubtResponse({ status: 'failed', message: 'Sign in to ask a doubt.' });
+      return;
+    }
+    const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+    const candidatePath = String(lessonPackage.pathId || pathId || '');
+    const payload = {
+      clientDoubtId: 'doubt_' + Date.now(),
+      pathId: uuidPattern.test(candidatePath) ? candidatePath : '',
+      blockId: doubtBlockId,
+      sourcePage: doubtPage,
+      questionText: doubtText
+    };
+    await submitDoubt(payload);
   };
 
   const handlePracticeSelect = (qId: string, opt: string) => {
@@ -833,7 +849,7 @@ export const LessonReaderPage: React.FC = () => {
               }}>
                 <div style={{ fontWeight: 700, fontSize: '14px', color: doubtResponse.status === 'answered' ? '#23795B' : '#A65B12', marginBottom: '6px' }}>
                   {doubtResponse.status === 'answered'
-                    ? 'Verified Answer'
+                    ? 'Answer from your sources'
                     : doubtResponse.status === 'queued'
                       ? 'Stored in Offline Queue'
                       : 'Could not answer yet'}
@@ -841,6 +857,22 @@ export const LessonReaderPage: React.FC = () => {
                 <div style={{ fontSize: '13px', lineHeight: 1.6, color: '#15233B' }}>
                   {doubtResponse.answer || doubtResponse.message}
                 </div>
+                {doubtResponse.limitations === 'insufficient_source_evidence' && (
+                  <div style={{ marginTop: '6px', fontSize: '12px', color: '#A65B12' }}>
+                    The uploaded source does not contain enough evidence for a verified answer.
+                  </div>
+                )}
+                {doubtResponse.retryable && (
+                  <button
+                    type="button"
+                    className={styles.offlineBtn}
+                    style={{ marginTop: '10px' }}
+                    onClick={() => lastDoubtPayload && void submitDoubt(lastDoubtPayload)}
+                    disabled={submittingDoubt}
+                  >
+                    {submittingDoubt ? 'Retrying…' : 'Retry'}
+                  </button>
+                )}
 
                 {doubtResponse.citations?.length > 0 && (
                   <div style={{ marginTop: '10px', paddingTop: '8px', borderTop: '1px solid #A3D9C4', fontSize: '12px', color: '#23795B' }}>
