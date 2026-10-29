@@ -1,19 +1,22 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useParams, useSearchParams, useNavigate } from 'react-router-dom';
 import { Download, Check, HelpCircle, X, ChevronRight, FileSearch, ArrowLeft, RefreshCw } from 'lucide-react';
 import { VisualRenderer } from '../components/visuals/VisualRenderer';
-import { saveLessonOffline, getOfflineLesson, queueDoubtOffline, queueAttemptOffline } from '../db/indexedDB';
+import { db, saveLessonOffline, getOfflineLesson, queueDoubtOffline, queueAttemptOffline } from '../db/indexedDB';
+import { api, type AttemptResult, type AttemptSubmission } from '../services/api';
 import styles from './LessonReaderPage.module.css';
 
 export const LessonReaderPage: React.FC = () => {
-  const { lessonId = 'default-01' } = useParams<{ lessonId: string }>();
+  const { lessonId = '' } = useParams<{ lessonId: string }>();
   const [searchParams] = useSearchParams();
-  const pathId = searchParams.get('pathId') || 'path-01';
+  const pathId = searchParams.get('pathId') || '';
   const navigate = useNavigate();
 
   const [activeTab, setActiveTab] = useState<'learn' | 'solve' | 'test'>('learn');
   const [lessonPackage, setLessonPackage] = useState<any | null>(null);
   const [loading, setLoading] = useState(true);
+  const [notReady, setNotReady] = useState(false);
+  const [readyMessage, setReadyMessage] = useState('This lesson is still being prepared from your document.');
   const [isSavedOffline, setIsSavedOffline] = useState(false);
   const [savingOffline, setSavingOffline] = useState(false);
 
@@ -30,163 +33,97 @@ export const LessonReaderPage: React.FC = () => {
 
   // Practice & Test Interactive State
   const [practiceAnswers, setPracticeAnswers] = useState<Record<string, string>>({});
-  const [practiceSubmitted, setPracticeSubmitted] = useState<Record<string, boolean>>({});
   const [revealedHints, setRevealedHints] = useState<Record<string, number>>({});
   const [testAnswers, setTestAnswers] = useState<Record<string, string>>({});
   const [testSubmitted, setTestSubmitted] = useState(false);
-  const [testScore, setTestScore] = useState(0);
+  const [attemptResults, setAttemptResults] = useState<Record<string, AttemptResult>>({});
+  const [attemptErrors, setAttemptErrors] = useState<Record<string, string>>({});
+  const [submittingQuestion, setSubmittingQuestion] = useState<string | null>(null);
+  const [checkpointResult, setCheckpointResult] = useState<{
+    correct: number;
+    total: number;
+    mastery: AttemptResult['mastery'] | null;
+    nextAction: AttemptResult['nextAction'] | null;
+    offline: boolean;
+  } | null>(null);
 
-  useEffect(() => {
-    loadLesson();
-  }, [lessonId]);
+  const questionStartedAt = useRef<Record<string, number>>({});
+  const readingStartedAt = useRef<number | null>(null);
 
-  const loadLesson = async () => {
-    setLoading(true);
-    // 1. Check local Dexie first
+  const markQuestionStarted = (questionId: string) => {
+    if (!questionStartedAt.current[questionId]) {
+      questionStartedAt.current[questionId] = Date.now();
+    }
+  };
+
+  const flushReadingTime = useCallback(() => {
+    if (!lessonPackage || !readingStartedAt.current) return;
+    const seconds = Math.max(0, Math.min(1800, Math.round((Date.now() - readingStartedAt.current) / 1000)));
+    readingStartedAt.current = null;
+    if (seconds < 5) return;
+    api.recordStudy({
+      eventType: 'reading',
+      pathId: pathId || undefined,
+      lessonId,
+      lessonTitle: lessonPackage.title,
+      seconds,
+    }).catch(() => undefined);
+  }, [lessonPackage, lessonId, pathId]);
+
+  const loadLesson = async (quiet = false) => {
+    if (!lessonId) {
+      setLoading(false);
+      setNotReady(true);
+      setReadyMessage('Choose a lesson from your learning path.');
+      return;
+    }
+    if (!quiet) setLoading(true);
     const offlineCopy = await getOfflineLesson(lessonId);
     if (offlineCopy) {
       setLessonPackage(offlineCopy.packageData);
       setIsSavedOffline(true);
+      setNotReady(false);
+      if (!readingStartedAt.current) readingStartedAt.current = Date.now();
       setLoading(false);
       return;
     }
 
-    // 2. Fetch from remote API
     try {
-      const res = await fetch(`/api/v1/learning-paths/lessons/${lessonId}?pathId=${pathId}`);
-      if (res.ok) {
-        const pkg = await res.json();
-        setLessonPackage(pkg);
-      } else {
-        // Fallback default for demo/catalogue
-        setLessonPackage(getDefaultDemoPackage(lessonId));
-      }
-    } catch {
-      setLessonPackage(getDefaultDemoPackage(lessonId));
+      const pkg = await api.getLesson(lessonId);
+      setLessonPackage(pkg);
+      setNotReady(false);
+      if (!readingStartedAt.current) readingStartedAt.current = Date.now();
+    } catch (err: any) {
+      setLessonPackage(null);
+      setNotReady(true);
+      setReadyMessage(err?.message || 'This lesson is still being prepared from your document.');
     } finally {
       setLoading(false);
     }
   };
 
-  const getDefaultDemoPackage = (id: string) => ({
-    schemaVersion: '1.0.0',
-    lessonId: id,
-    lessonVersion: 1,
-    pathId: pathId,
-    title: 'Plasma Membrane & Diffusion Mechanics',
-    grade: 9,
-    subjectId: 'SCIENCE',
-    languageTag: 'en-IN',
-    objectives: [
-      'Describe the selective permeability of the plasma membrane.',
-      'Explain how diffusion allows movement of carbon dioxide and oxygen across cells.',
-      'Distinguish between hypotonic, isotonic, and hypertonic solutions based on osmosis.'
-    ],
-    blocks: [
-      {
-        blockId: 'block-1',
-        kind: 'explanation',
-        heading: 'Structure of the Plasma Membrane',
-        content: 'The plasma membrane is the outermost covering of the cell that separates the contents of the cell from its external environment. It is flexible and made up of organic molecules called lipids and proteins. Because it permits the entry and exit of some materials in and out of the cell while preventing movement of other materials, it is called a selectively permeable membrane.',
-        sourceRefs: [{ citationId: 'cite_p59', pageStart: 59, pageEnd: 59, sourceTitle: 'Class 9 Science Textbook' }]
-      },
-      {
-        blockId: 'block-2',
-        kind: 'explanation',
-        heading: 'Diffusion Mechanism',
-        content: 'Some substances like carbon dioxide (CO₂) or oxygen (O₂) can move across the cell membrane by a process called diffusion. Substances move spontaneously from a region of high concentration to a region of low concentration.',
-        sourceRefs: [{ citationId: 'cite_p60', pageStart: 60, pageEnd: 60, sourceTitle: 'Class 9 Science Textbook' }]
-      }
-    ],
-    visuals: [
-      {
-        visualId: 'vis-membrane',
-        type: 'cell_membrane',
-        altText: 'Plasma Membrane Phospholipid Bilayer with Selective Carrier Protein',
-        spec: {
-          data: {
-            labels: {
-              outer: 'Extracellular Fluid (High Solute/Oxygen)',
-              inner: 'Cytoplasm (Low Solute/Oxygen)',
-              bilayer: 'Phospholipid Bilayer',
-              channel: 'Selective Transport Protein'
-            }
-          }
-        }
-      }
-    ],
-    workedExamples: [
-      {
-        prompt: 'Why does carbon dioxide exit the cell when cellular respiration is high?',
-        steps: [
-          'High cellular respiration creates high CO₂ concentration inside the cell.',
-          'External concentration of CO₂ is comparatively low.',
-          'Diffusion governs net movement from high concentration inside to low concentration outside.'
-        ],
-        answer: 'CO₂ moves out of the cell spontaneously by diffusion across the selectively permeable membrane.',
-        sourceRefs: [{ citationId: 'cite_p60', pageStart: 60, pageEnd: 60, sourceTitle: 'Class 9 Science Textbook' }]
-      }
-    ],
-    practice: [
-      {
-        questionId: 'p-q1',
-        type: 'multiple_choice',
-        prompt: 'Why is the plasma membrane referred to as selectively permeable?',
-        options: [
-          'It permits only water molecules to pass while blocking everything else.',
-          'It allows entry and exit of certain selective materials while blocking others.',
-          'It remains completely rigid and impermeable at all times.',
-          'It permits all cellular organelles to leave freely.'
-        ],
-        conceptIds: ['sci-membrane-perm'],
-        answerKey: 'It allows entry and exit of certain selective materials while blocking others.',
-        hints: [
-          'Review the definition in Section 1 on the outermost covering.',
-          'Notice how certain essential substances enter while foreign harmful substances are kept out.'
-        ],
-        feedback: 'Correct! As stated in the textbook (Page 59), it permits selective materials to cross while maintaining internal stability.'
-      }
-    ],
-    checkpointTest: [
-      {
-        questionId: 't-q1',
-        type: 'multiple_choice',
-        prompt: 'Which physical process accounts for the spontaneous movement of oxygen across the cell membrane?',
-        options: [
-          'Active Endocytosis',
-          'Diffusion down a concentration gradient',
-          'Complete membrane breakdown',
-          'Photosynthetic hydrolysis'
-        ],
-        conceptIds: ['sci-diffusion'],
-        answerKey: 'Diffusion down a concentration gradient',
-        feedback: 'Excellent! Diffusion drives molecules from high concentration to low concentration.'
-      },
-      {
-        questionId: 't-q2',
-        type: 'multiple_choice',
-        prompt: 'What are the two primary organic molecules constituting the plasma membrane?',
-        options: [
-          'Lipids and Proteins',
-          'Cellulose and Calcium',
-          'DNA and Starch',
-          'Iron and Silicon'
-        ],
-        conceptIds: ['sci-membrane-chem'],
-        answerKey: 'Lipids and Proteins',
-        feedback: 'Spot on! The membrane is composed of a flexible lipid bilayer with embedded proteins.'
-      }
-    ],
-    takeaways: [
-      'The plasma membrane is a flexible lipid-protein bilayer that is selectively permeable.',
-      'Gases like oxygen and carbon dioxide move across the membrane by diffusion from high to low concentration.',
-      'Water movement follows the principles of osmosis depending on solution tonicity.'
-    ],
-    sourceRefs: [
-      { citationId: 'cite_p59', pageStart: 59, pageEnd: 59, sourceTitle: 'Class 9 Science Textbook' },
-      { citationId: 'cite_p60', pageStart: 60, pageEnd: 60, sourceTitle: 'Class 9 Science Textbook' }
-    ]
-  });
+  useEffect(() => {
+    loadLesson();
+  }, [lessonId]);
+
+  useEffect(() => {
+    if (!notReady || !lessonId) return;
+    const timer = window.setInterval(() => {
+      loadLesson(true);
+    }, 4000);
+    return () => window.clearInterval(timer);
+  }, [notReady, lessonId]);
+
+  useEffect(() => {
+    const onVisibility = () => {
+      if (document.visibilityState === 'hidden') flushReadingTime();
+    };
+    document.addEventListener('visibilitychange', onVisibility);
+    return () => {
+      document.removeEventListener('visibilitychange', onVisibility);
+      flushReadingTime();
+    };
+  }, [flushReadingTime]);
 
   const handleSaveOffline = async () => {
     if (!lessonPackage) return;
@@ -214,112 +151,219 @@ export const LessonReaderPage: React.FC = () => {
     setDoubtResponse(null);
 
     const clientDoubtId = 'doubt_' + Date.now();
-
-    // Always queue in Dexie first (Offline First)
-    await queueDoubtOffline({
+    const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+    const candidatePath = String(lessonPackage.pathId || pathId || '');
+    const payload = {
       clientDoubtId,
-      pathId: lessonPackage.pathId || pathId,
-      lessonVersionId: String(lessonPackage.lessonVersion || 1),
+      pathId: uuidPattern.test(candidatePath) ? candidatePath : '',
       blockId: doubtBlockId,
-      sourcePage: doubtPage || 59,
+      sourcePage: doubtPage,
       questionText: doubtText
-    });
+    };
 
     if (!navigator.onLine) {
+      await queueDoubtOffline(payload);
       setDoubtResponse({
         status: 'queued',
-        message: 'You are offline. Your doubt has been safely stored in your offline queue and will sync automatically when reconnected.'
+        message: 'You are offline. Your doubt has been safely stored in your offline queue and will sync automatically upon reconnection.'
       });
       setSubmittingDoubt(false);
       return;
     }
 
     try {
-      const res = await fetch('/api/v1/sync/doubts', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          doubts: [{
-            clientDoubtId,
-            pathId: lessonPackage.pathId || pathId,
-            lessonVersionId: String(lessonPackage.lessonVersion || 1),
-            blockId: doubtBlockId,
-            sourcePage: doubtPage || 59,
-            questionText: doubtText,
-            submittedAt: new Date().toISOString()
-          }]
-        })
-      });
+      const res = await api.askDoubt(payload);
+      const answerPayload = res.answerJson;
 
-      if (res.ok) {
-        const data = await res.json();
-        const r = data.results?.[0];
+      if (answerPayload && res.status === 'answered' && answerPayload.answer) {
+        await db.doubtOutbox.put({
+          clientDoubtId,
+          pathId: payload.pathId,
+          blockId: payload.blockId,
+          sourcePage: payload.sourcePage,
+          questionText: payload.questionText,
+          status: 'answered',
+          synced: true,
+          submittedAt: new Date().toISOString(),
+          answerPayload: {
+            answer: answerPayload.answer,
+            citations: answerPayload.citations || [],
+            answeredAt: answerPayload.answeredAt || new Date().toISOString()
+          }
+        });
+
+        await db.cachedAnswers.put({
+          clientDoubtId,
+          doubtId: res.id,
+          questionText: payload.questionText,
+          answer: answerPayload.answer,
+          citations: answerPayload.citations || [],
+          cachedAt: answerPayload.answeredAt || new Date().toISOString()
+        });
+
         setDoubtResponse({
           status: 'answered',
-          answer: r?.answer || 'Thank you for your doubt. Your academic tutor will review it.',
-          citations: r?.citations || []
+          answer: answerPayload.answer,
+          citations: answerPayload.citations || []
         });
       } else {
         setDoubtResponse({
-          status: 'queued',
-          message: 'Saved to sync queue. Reconnecting will resolve citations.'
+          status: 'failed',
+          message: 'The model could not answer this yet. Try again when it is available.'
         });
       }
-    } catch {
-      setDoubtResponse({
-        status: 'queued',
-        message: 'Network issue. Stored offline and will sync once reconnected.'
-      });
+    } catch (err: any) {
+      const networkFailure = err instanceof TypeError || !navigator.onLine;
+      if (networkFailure) {
+        await queueDoubtOffline(payload);
+        setDoubtResponse({
+          status: 'queued',
+          message: 'The request did not reach SETU. It is saved offline and will sync when you reconnect.'
+        });
+      } else {
+        setDoubtResponse({
+          status: 'failed',
+          message: err?.message || 'The model could not answer this yet. Try again.'
+        });
+      }
     } finally {
       setSubmittingDoubt(false);
     }
   };
 
   const handlePracticeSelect = (qId: string, opt: string) => {
-    if (practiceSubmitted[qId]) return;
+    if (attemptResults[qId]) return;
+    markQuestionStarted(qId);
     setPracticeAnswers(prev => ({ ...prev, [qId]: opt }));
   };
 
   const handlePracticeSubmit = async (q: any) => {
     const selected = practiceAnswers[q.questionId];
-    if (!selected) return;
+    if (!selected || !lessonPackage?.lessonVersionId) return;
 
-    const isCorrect = selected === q.answerKey;
-    setPracticeSubmitted(prev => ({ ...prev, [q.questionId]: true }));
+    const startedAt = questionStartedAt.current[q.questionId] || Date.now();
+    const elapsedSeconds = Math.max(0, Math.min(1800, Math.round((Date.now() - startedAt) / 1000)));
+    const hintsUsed = (q.hints || []).slice(0, revealedHints[q.questionId] || 0);
+    const payload: AttemptSubmission = {
+      lessonVersionId: lessonPackage.lessonVersionId,
+      questionKey: q.questionId,
+      response: selected,
+      hintLevel: hintsUsed.length,
+      hintsUsed,
+      elapsedSeconds,
+      attemptKind: 'practice',
+      syncIdempotencyKey: `practice-${lessonPackage.lessonVersionId}-${q.questionId}`,
+    };
 
-    // Queue attempt offline
-    await queueAttemptOffline({
-      clientAttemptId: 'att_' + Date.now(),
-      lessonId,
-      questionId: q.questionId,
-      selectedOption: selected,
-      isCorrect,
-      score: isCorrect ? 1.0 : 0.0,
-      timeSpentSeconds: 15
-    });
+    setSubmittingQuestion(q.questionId);
+    setAttemptErrors(prev => ({ ...prev, [q.questionId]: '' }));
+    try {
+      const result = await api.submitAttempt(payload);
+      setAttemptResults(prev => ({ ...prev, [q.questionId]: result }));
+    } catch (err: any) {
+      if (!navigator.onLine) {
+        await queueAttemptOffline({
+          clientAttemptId: payload.syncIdempotencyKey!,
+          lessonId,
+          lessonVersionId: payload.lessonVersionId,
+          questionKey: payload.questionKey,
+          response: payload.response,
+          hintLevel: payload.hintLevel || 0,
+          hintsUsed: payload.hintsUsed || [],
+          attemptKind: payload.attemptKind || 'practice',
+          elapsedSeconds: payload.elapsedSeconds || 0,
+        });
+        setAttemptErrors(prev => ({
+          ...prev,
+          [q.questionId]: 'Saved offline. This answer will be graded when you reconnect.',
+        }));
+      } else {
+        setAttemptErrors(prev => ({
+          ...prev,
+          [q.questionId]: err?.message || 'The answer could not be graded. Try again.',
+        }));
+      }
+    } finally {
+      setSubmittingQuestion(null);
+    }
   };
 
   const handleRevealHint = (qId: string) => {
+    markQuestionStarted(qId);
     setRevealedHints(prev => ({ ...prev, [qId]: (prev[qId] || 0) + 1 }));
   };
 
   const handleTestSelect = (qId: string, opt: string) => {
     if (testSubmitted) return;
+    markQuestionStarted(qId);
     setTestAnswers(prev => ({ ...prev, [qId]: opt }));
   };
 
-  const handleTestSubmit = () => {
-    if (!lessonPackage?.checkpointTest) return;
-    let score = 0;
-
-    lessonPackage.checkpointTest.forEach((q: any) => {
-      if (testAnswers[q.questionId] === q.answerKey) {
-        score++;
-      }
-    });
-
-    setTestScore(score);
+  const handleTestSubmit = async () => {
+    if (!lessonPackage?.checkpointTest?.length || !lessonPackage.lessonVersionId) return;
     setTestSubmitted(true);
+    const results: AttemptResult[] = [];
+    let queuedOffline = false;
+
+    for (const q of lessonPackage.checkpointTest) {
+      const selected = testAnswers[q.questionId];
+      if (!selected) continue;
+      const startedAt = questionStartedAt.current[q.questionId] || Date.now();
+      const elapsedSeconds = Math.max(0, Math.min(1800, Math.round((Date.now() - startedAt) / 1000)));
+      const payload: AttemptSubmission = {
+        lessonVersionId: lessonPackage.lessonVersionId,
+        questionKey: q.questionId,
+        response: selected,
+        hintLevel: 0,
+        hintsUsed: [],
+        elapsedSeconds,
+        attemptKind: 'checkpoint',
+        syncIdempotencyKey: `checkpoint-${lessonPackage.lessonVersionId}-${q.questionId}`,
+      };
+      try {
+        const result = await api.submitAttempt(payload);
+        results.push(result);
+        setAttemptResults(prev => ({ ...prev, [q.questionId]: result }));
+      } catch (err: any) {
+        if (!navigator.onLine) {
+          await queueAttemptOffline({
+            clientAttemptId: payload.syncIdempotencyKey!,
+            lessonId,
+            lessonVersionId: payload.lessonVersionId,
+            questionKey: payload.questionKey,
+            response: payload.response,
+            hintLevel: 0,
+            hintsUsed: [],
+            attemptKind: 'checkpoint',
+            elapsedSeconds,
+          });
+          queuedOffline = true;
+        } else {
+          setCheckpointResult({
+            correct: 0,
+            total: lessonPackage.checkpointTest.length,
+            mastery: null,
+            nextAction: null,
+            offline: false,
+          });
+          setAttemptErrors(prev => ({
+            ...prev,
+            checkpoint: err?.message || 'The checkpoint could not be graded. Try again.',
+          }));
+          return;
+        }
+      }
+    }
+
+    const correct = results.filter(item => item.isCorrect).length;
+    const last = results[results.length - 1];
+    setCheckpointResult({
+      correct,
+      total: lessonPackage.checkpointTest.length,
+      mastery: last?.mastery || null,
+      nextAction: last?.nextAction || null,
+      offline: queuedOffline,
+    });
   };
 
   if (loading) {
@@ -335,7 +379,8 @@ export const LessonReaderPage: React.FC = () => {
     return (
       <div className={styles.container}>
         <div style={{ padding: '32px', textAlign: 'center' }}>
-          <h2>Lesson not found</h2>
+          <h2>{notReady ? 'Preparing this lesson' : 'Lesson not found'}</h2>
+          <p>{readyMessage}</p>
           <button className={styles.offlineBtn} onClick={() => navigate('/')}>
             <ArrowLeft size={16} /> Return to Desk
           </button>
@@ -509,10 +554,12 @@ export const LessonReaderPage: React.FC = () => {
           </p>
 
           {lessonPackage.practice?.map((q: any) => {
-            const isSubmitted = practiceSubmitted[q.questionId];
+            const result = attemptResults[q.questionId];
+            const isSubmitted = Boolean(result);
+            const isCorrect = result?.isCorrect === true;
             const selected = practiceAnswers[q.questionId];
-            const isCorrect = selected === q.answerKey;
             const hintCount = revealedHints[q.questionId] || 0;
+            const isSubmitting = submittingQuestion === q.questionId;
 
             return (
               <div key={q.questionId} className={styles.questionCard}>
@@ -523,7 +570,7 @@ export const LessonReaderPage: React.FC = () => {
                     const isThisSelected = selected === opt;
                     let optClass = styles.optionBtn;
                     if (isSubmitted) {
-                      if (opt === q.answerKey) optClass = `${styles.optionBtn} ${styles.optionCorrect}`;
+                      if (opt === result?.correctAnswer) optClass = `${styles.optionBtn} ${styles.optionCorrect}`;
                       else if (isThisSelected) optClass = `${styles.optionBtn} ${styles.optionIncorrect}`;
                     } else if (isThisSelected) {
                       optClass = `${styles.optionBtn} ${styles.optionSelected}`;
@@ -566,14 +613,22 @@ export const LessonReaderPage: React.FC = () => {
                     className={styles.offlineBtn}
                     style={{ alignSelf: 'flex-start', background: '#4055D9', color: '#FFFFFF' }}
                     onClick={() => handlePracticeSubmit(q)}
-                    disabled={!selected}
+                    disabled={!selected || isSubmitting}
                   >
-                    Check Answer
+                    {isSubmitting ? 'Checking…' : 'Check Answer'}
                   </button>
                 ) : (
                   <div className={`${styles.feedbackBox} ${isCorrect ? styles.feedbackSuccess : styles.feedbackWarning}`}>
-                    <strong>{isCorrect ? '✓ Well Done!' : '✕ Not Quite.'}</strong> {q.feedback}
+                    <strong>{isCorrect ? '✓ Correct.' : '✕ Not quite.'}</strong> {result?.feedback}
+                    {result?.nextAction?.title ? (
+                      <div style={{ marginTop: '6px', fontSize: '13px' }}>
+                        {result.nextAction.title}: {result.nextAction.reason}
+                      </div>
+                    ) : null}
                   </div>
+                )}
+                {attemptErrors[q.questionId] && (
+                  <div className={styles.feedbackWarning}>{attemptErrors[q.questionId]}</div>
                 )}
               </div>
             );
@@ -602,6 +657,7 @@ export const LessonReaderPage: React.FC = () => {
 
           {lessonPackage.checkpointTest?.map((q: any, qIdx: number) => {
             const selected = testAnswers[q.questionId];
+            const result = attemptResults[q.questionId];
             return (
               <div key={q.questionId} className={styles.questionCard}>
                 <div className={styles.questionPrompt}>
@@ -613,7 +669,7 @@ export const LessonReaderPage: React.FC = () => {
                     const isSelected = selected === opt;
                     let optClass = styles.optionBtn;
                     if (testSubmitted) {
-                      if (opt === q.answerKey) optClass = `${styles.optionBtn} ${styles.optionCorrect}`;
+                      if (opt === result?.correctAnswer) optClass = `${styles.optionBtn} ${styles.optionCorrect}`;
                       else if (isSelected) optClass = `${styles.optionBtn} ${styles.optionIncorrect}`;
                     } else if (isSelected) {
                       optClass = `${styles.optionBtn} ${styles.optionSelected}`;
@@ -643,23 +699,48 @@ export const LessonReaderPage: React.FC = () => {
             >
               Submit Checkpoint Test
             </button>
+          ) : !checkpointResult ? (
+            <div style={{ padding: '24px', borderRadius: '8px', background: '#FAFAF8', border: '1px solid #D9DEEA' }}>
+              <h3 style={{ fontSize: '18px', fontWeight: 700, color: '#15233B', marginBottom: '8px' }}>
+                Checking your answers…
+              </h3>
+              <p style={{ fontSize: '14px', color: '#4A5873', lineHeight: 1.6 }}>
+                Each answer is being graded by SETU. This usually takes a moment.
+              </p>
+            </div>
           ) : (
             <div style={{ padding: '24px', borderRadius: '8px', background: '#E8F5F0', border: '1px solid #A3D9C4' }}>
               <h3 style={{ fontSize: '18px', fontWeight: 700, color: '#23795B', marginBottom: '8px' }}>
-                🎉 Checkpoint Completed: Score {testScore} / {lessonPackage.checkpointTest?.length}
+                {checkpointResult.offline
+                  ? 'Checkpoint saved offline'
+                  : `Checkpoint: ${checkpointResult.correct} of ${checkpointResult.total} correct`}
               </h3>
-              <p style={{ fontSize: '14px', color: '#15233B', lineHeight: 1.6 }}>
-                Your evidence snapshot has been updated. You've demonstrated strong conceptual understanding of the plasma membrane barrier and diffusion gradients!
-              </p>
-              <div style={{ marginTop: '16px', display: 'flex', gap: '12px' }}>
-                <button className={styles.offlineBtn} onClick={() => navigate('/teacher')}>
-                  View Teacher Evidence Matrix
-                </button>
-                <button className={styles.offlineBtn} onClick={() => navigate('/')}>
-                  Next Lesson on Desk
-                </button>
-              </div>
+              {checkpointResult.offline ? (
+                <p style={{ fontSize: '14px', color: '#15233B', lineHeight: 1.6 }}>
+                  The answers are stored on this device. Results appear after they sync.
+                </p>
+              ) : (
+                <>
+                  <p style={{ fontSize: '14px', color: '#15233B', lineHeight: 1.6 }}>
+                    Mastery: {checkpointResult.mastery?.band || 'not enough evidence'}
+                    {checkpointResult.mastery ? ` — ${checkpointResult.mastery.explanation}` : ''}
+                  </p>
+                  {checkpointResult.nextAction && (
+                    <p style={{ fontSize: '14px', color: '#15233B', lineHeight: 1.6 }}>
+                      {checkpointResult.nextAction.title}: {checkpointResult.nextAction.reason}
+                    </p>
+                  )}
+                  <div style={{ marginTop: '16px' }}>
+                    <button className={styles.offlineBtn} onClick={() => navigate('/')}>
+                      Back to Desk
+                    </button>
+                  </div>
+                </>
+              )}
             </div>
+          )}
+          {attemptErrors.checkpoint && (
+            <div className={styles.feedbackWarning}>{attemptErrors.checkpoint}</div>
           )}
         </div>
       )}
@@ -687,7 +768,7 @@ export const LessonReaderPage: React.FC = () => {
             </div>
 
             <div style={{ padding: '16px', background: '#FAFAF8', borderRadius: '8px', border: '1px solid #D9DEEA', fontSize: '14px', lineHeight: 1.6, color: '#15233B' }}>
-              "The plasma membrane is the outermost covering of the cell that separates the contents of the cell from its external environment. The plasma membrane allows or permits the entry and exit of some materials in and out of the cell."
+              {activeCitation.excerpt || activeCitation.text || 'Source excerpt verified from the uploaded document.'}
             </div>
 
             <div style={{ fontSize: '12px', color: '#4A5873' }}>
@@ -709,12 +790,12 @@ export const LessonReaderPage: React.FC = () => {
             </div>
 
             <p style={{ fontSize: '13px', color: '#4A5873' }}>
-              Ask any question about this lesson. Your answer is grounded strictly in the verified textbook source (Page {doubtPage || 59}).
+              Ask any question about this lesson. Your answer is grounded strictly in your verified textbook source{doubtPage ? ` (Page ${doubtPage})` : ''}.
             </p>
 
             <textarea
               className={styles.doubtInput}
-              placeholder="e.g., What happens if the plasma membrane ruptures or breaks down?"
+              placeholder="e.g., Ask any question or clarification about this concept..."
               value={doubtText}
               onChange={e => setDoubtText(e.target.value)}
             />
@@ -736,7 +817,11 @@ export const LessonReaderPage: React.FC = () => {
                 border: `1px solid ${doubtResponse.status === 'answered' ? '#A3D9C4' : '#F1CE9C'}`
               }}>
                 <div style={{ fontWeight: 700, fontSize: '14px', color: doubtResponse.status === 'answered' ? '#23795B' : '#A65B12', marginBottom: '6px' }}>
-                  {doubtResponse.status === 'answered' ? 'Verified Answer' : 'Stored in Offline Queue'}
+                  {doubtResponse.status === 'answered'
+                    ? 'Verified Answer'
+                    : doubtResponse.status === 'queued'
+                      ? 'Stored in Offline Queue'
+                      : 'Could not answer yet'}
                 </div>
                 <div style={{ fontSize: '13px', lineHeight: 1.6, color: '#15233B' }}>
                   {doubtResponse.answer || doubtResponse.message}
@@ -746,7 +831,7 @@ export const LessonReaderPage: React.FC = () => {
                   <div style={{ marginTop: '10px', paddingTop: '8px', borderTop: '1px solid #A3D9C4', fontSize: '12px', color: '#23795B' }}>
                     <strong>Citations: </strong>
                     {doubtResponse.citations.map((c: any, i: number) => (
-                      <span key={i} style={{ marginRight: '8px' }}>Page {c.pageNumber}</span>
+                      <span key={i} style={{ marginRight: '8px' }}>Page {c.pageNumber || c.pageStart}</span>
                     ))}
                   </div>
                 )}

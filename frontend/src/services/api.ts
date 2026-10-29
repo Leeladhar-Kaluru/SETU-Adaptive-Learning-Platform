@@ -168,6 +168,35 @@ export interface StudentDashboardResponse {
   }>;
 }
 
+export interface AttemptSubmission {
+  lessonVersionId: string;
+  questionKey: string;
+  response: unknown;
+  hintLevel?: number;
+  hintsUsed?: string[];
+  elapsedSeconds?: number;
+  attemptKind?: 'practice' | 'checkpoint';
+  syncIdempotencyKey?: string;
+}
+
+export interface AttemptResult {
+  attemptId: string;
+  isCorrect: boolean;
+  score: number;
+  correctAnswer?: unknown;
+  feedback: string;
+  mastery: { band: string; score: number; evidenceCount: number; explanation: string };
+  nextAction: {
+    action: string;
+    title: string;
+    reason: string;
+    canAdvance: boolean;
+    remediationInjected?: boolean;
+    remediationLessonId?: string;
+  };
+  alreadyRecorded: boolean;
+}
+
 function getAuthHeader(): Record<string, string> {
   const token = localStorage.getItem('setu_auth_token');
   return token ? { Authorization: `Bearer ${token}` } : {};
@@ -316,6 +345,13 @@ export const api = {
 
   async getLesson(lessonId: string): Promise<any> {
     return request<any>(`/learning-paths/lessons/${lessonId}`);
+  },
+
+  async submitAttempt(data: AttemptSubmission): Promise<AttemptResult> {
+    return request<AttemptResult>('/attempts', {
+      method: 'POST',
+      body: JSON.stringify(data)
+    });
   },
 
   // Doubts (Real online submission & history)

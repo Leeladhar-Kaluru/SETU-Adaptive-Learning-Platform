@@ -1,3 +1,4 @@
+import copy
 import uuid
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, ConfigDict, Field
@@ -13,6 +14,15 @@ from app.services.generation_queue import enqueue_lesson_generation
 from app.services.lesson_generator import lesson_generator_service
 
 router = APIRouter()
+
+
+def _redact_answer_keys(package: dict) -> dict:
+    sanitized = copy.deepcopy(package)
+    for section in ("practice", "checkpointTest"):
+        for question in sanitized.get(section, []) or []:
+            question.pop("answerKey", None)
+    return sanitized
+
 
 class OutlineRequest(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
@@ -278,6 +288,6 @@ def get_lesson_package(
     if not version or not version.lesson_package_json:
         raise HTTPException(status_code=404, detail="Lesson package content not ready")
 
-    package = dict(version.lesson_package_json)
+    package = _redact_answer_keys(dict(version.lesson_package_json))
     package["lessonVersionId"] = str(version.id)
     return package

@@ -114,11 +114,13 @@ class SyncManager {
           eventType: 'quiz_attempt',
           payload: {
             lessonId: a.lessonId,
-            questionId: a.questionId,
-            selectedOption: a.selectedOption,
-            isCorrect: a.isCorrect,
-            score: a.score,
-            timeSpentSeconds: a.timeSpentSeconds
+            lessonVersionId: a.lessonVersionId,
+            questionKey: a.questionKey,
+            response: a.response,
+            hintLevel: a.hintLevel,
+            hintsUsed: a.hintsUsed,
+            attemptKind: a.attemptKind,
+            elapsedSeconds: a.elapsedSeconds
           },
           timestamp: a.submittedAt
         }));

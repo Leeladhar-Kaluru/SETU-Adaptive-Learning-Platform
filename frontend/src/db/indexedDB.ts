@@ -22,11 +22,13 @@ export interface OfflineVisual {
 export interface OfflineAttempt {
   clientAttemptId: string;
   lessonId: string;
-  questionId: string;
-  selectedOption: string;
-  isCorrect: boolean;
-  score: number;
-  timeSpentSeconds: number;
+  lessonVersionId: string;
+  questionKey: string;
+  response: unknown;
+  hintLevel: number;
+  hintsUsed: string[];
+  attemptKind: 'practice' | 'checkpoint';
+  elapsedSeconds: number;
   synced: boolean;
   submittedAt: string;
 }
@@ -186,11 +188,13 @@ export async function getAllDoubts(): Promise<OfflineDoubt[]> {
 export async function queueAttemptOffline(params: {
   clientAttemptId: string;
   lessonId: string;
-  questionId: string;
-  selectedOption: string;
-  isCorrect: boolean;
-  score: number;
-  timeSpentSeconds: number;
+  lessonVersionId: string;
+  questionKey: string;
+  response: unknown;
+  hintLevel: number;
+  hintsUsed: string[];
+  attemptKind: 'practice' | 'checkpoint';
+  elapsedSeconds: number;
 }): Promise<void> {
   const attemptRecord: OfflineAttempt = {
     ...params,
@@ -199,3 +203,4 @@ export async function queueAttemptOffline(params: {
   };
   await db.offlineAttempts.put(attemptRecord);
 }
+

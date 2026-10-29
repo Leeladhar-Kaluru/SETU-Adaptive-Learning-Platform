@@ -37,6 +37,7 @@ class AttemptOutcome:
     is_correct: bool
     score: float
     feedback: str
+    correct_answer: Any
     mastery: dict
     next_action: dict
     already_recorded: bool
@@ -46,7 +47,7 @@ def _normalize(value: Any) -> str:
     return " ".join(str(value).split()).strip().casefold()
 
 
-def grade_response(question: Question, response: Any) -> tuple[bool, float, str]:
+def grade_response(question: Question, response: Any) -> tuple[bool, float, str, Any]:
     answer_key = question.answer_key_json or {}
     expected = answer_key.get("answer")
     if expected is None or str(expected).strip() == "":
@@ -69,7 +70,7 @@ def grade_response(question: Question, response: Any) -> tuple[bool, float, str]
         raise UnsupportedQuestionTypeError(
             f"Question type '{question.type}' cannot be graded deterministically."
         )
-    return correct, 1.0 if correct else 0.0, feedback
+    return correct, 1.0 if correct else 0.0, feedback, expected
 
 
 def _concept_evidence_records(db: Session, owner_id: uuid.UUID, concept_id: str) -> list[dict]:
@@ -180,12 +181,13 @@ def grade_and_record_attempt(
                 is_correct=bool(existing.is_correct),
                 score=float(existing.score or 0.0),
                 feedback=feedback,
+                correct_answer=(question.answer_key_json or {}).get("answer"),
                 mastery=mastery,
                 next_action=adaptive_engine.determine_next_action(mastery),
                 already_recorded=True,
             )
 
-    is_correct, score, feedback = grade_response(question, response)
+    is_correct, score, feedback, correct_answer = grade_response(question, response)
     hint_count = len(hints_used) if hints_used is not None else hint_level
 
     attempt = QuizAttempt(
@@ -296,6 +298,7 @@ def grade_and_record_attempt(
         is_correct=is_correct,
         score=score,
         feedback=feedback,
+        correct_answer=correct_answer,
         mastery=mastery,
         next_action=next_action,
         already_recorded=False,

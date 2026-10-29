@@ -62,6 +62,7 @@ def submit_attempt(
         "attemptId": str(outcome.attempt_id),
         "isCorrect": outcome.is_correct,
         "score": outcome.score,
+        "correctAnswer": outcome.correct_answer,
         "feedback": outcome.feedback,
         "mastery": outcome.mastery,
         "nextAction": outcome.next_action,
