@@ -1,301 +1,271 @@
-import pytest
 import uuid
-import datetime
-from fastapi.testclient import TestClient
-from app.main import app
-from app.core.database import SessionLocal
-from app.models.profiles import UserProfile
-from app.models.classroom import Classroom, ClassroomMembership, TeacherAction
+
+from app.models.classroom import ClassroomMembership
 from app.models.learning import (
-    LearningPath,
-    PathLesson,
-    LessonVersion,
-    Question,
-    QuizAttempt,
     ConceptMasterySnapshot,
-    StudyEvent
+    LearningPath,
+    LessonVersion,
+    PathLesson,
+    Question,
 )
+from app.models.profiles import UserProfile
+from tests.conftest import auth_headers
 
-pytestmark = pytest.mark.skip(reason="attempt/recommendation contracts are rewritten in Task 14")
+CONCEPT = "concept-chemical-reactions"
 
-client = TestClient(app)
 
-@pytest.mark.asyncio
-async def test_multi_user_adaptive_evidence_matrix():
-    """
-    Multi-user verification test:
-    1 Teacher (Mrs. Sharma) + 3 Students (Aarav, Diya, Rohan).
-    - Teacher creates classroom.
-    - Students join via join code.
-    - Students submit real quiz attempts with varying performance:
-      * Aarav: High mastery (Demonstrated)
-      * Diya: Struggling (Developing) -> triggers dynamic path remediation injection!
-      * Rohan: Moderate (Approaching)
-    - Teacher observes live Evidence Matrix reflecting all 3 students.
-    - Teacher issues targeted recommendation to Diya.
-    - Diya's student dashboard reflects the activity, streak, and injected remediation.
-    """
-    db = SessionLocal()
-    teacher_id = uuid.uuid4()
-    aarav_id = uuid.uuid4()
-    diya_id = uuid.uuid4()
-    rohan_id = uuid.uuid4()
-
-    try:
-        # 1. Create profiles in DB
-        db.add_all([
-            UserProfile(id=teacher_id, email="teacher.sharma@setu.test", display_name="Mrs. Sharma", role="teacher", grade=10),
-            UserProfile(id=aarav_id, email="aarav.cbse10@setu.test", display_name="Aarav Patel", role="student", grade=10, board_id="board-cbse"),
-            UserProfile(id=diya_id, email="diya.cbse10@setu.test", display_name="Diya Rao", role="student", grade=10, board_id="board-cbse"),
-            UserProfile(id=rohan_id, email="rohan.cbse10@setu.test", display_name="Rohan Gupta", role="student", grade=10, board_id="board-cbse"),
-        ])
-        db.commit()
-
-        # 2. Teacher creates classroom
-        create_resp = client.post(
-            "/api/v1/teacher/classrooms",
-            headers={"x-user-id": str(teacher_id)},
-            json={
-                "name": "Class 10-A Science",
-                "grade": 10,
-                "boardId": "board-cbse",
-                "subjectScope": "Science"
-            }
-        )
-        assert create_resp.status_code == 200, f"Create classroom failed: {create_resp.text}"
-        c_data = create_resp.json()
-        classroom_id = c_data["id"]
-        join_code = c_data["joinCode"]
-        assert join_code is not None
-
-        # 3. All 3 students join classroom
-        for s_id, s_name in [(aarav_id, "Aarav"), (diya_id, "Diya"), (rohan_id, "Rohan")]:
-            join_resp = client.post(
-                "/api/v1/teacher/join",
-                headers={"x-user-id": str(s_id)},
-                json={"joinCode": join_code}
-            )
-            assert join_resp.status_code == 200, f"{s_name} join failed: {join_resp.text}"
-            assert join_resp.json()["success"] is True
-
-        # Verify classroom has 3 active members
-        memberships = db.query(ClassroomMembership).filter(ClassroomMembership.classroom_id == uuid.UUID(classroom_id)).all()
-        assert len(memberships) == 3
-
-        # 4. Set up a curriculum path, lesson, and questions to test attempts
-        path = LearningPath(
-            owner_id=diya_id,
+def _profile(db, role="student", name="Student"):
+    user_id = uuid.uuid4()
+    db.add(
+        UserProfile(
+            id=user_id,
+            email=f"{role}-{user_id.hex[:6]}@example.com",
+            display_name=name,
+            role=role,
             grade=10,
-            subject_id="subject-science",
-            outline_json={"title": "Chemical Reactions", "chapters": []}
+            board_id="board-cbse",
+            preferred_language="en-IN",
         )
-        db.add(path)
-        db.commit()
-        db.refresh(path)
+    )
+    db.commit()
+    return user_id
 
-        lesson = PathLesson(
-            path_id=path.id,
-            lesson_key="chem_101",
-            title="Chemical Reactions and Equations",
-            sequence=1,
-            status="ready"
-        )
-        db.add(lesson)
-        db.commit()
-        db.refresh(lesson)
 
-        l_ver = LessonVersion(
-            path_lesson_id=lesson.id,
-            version_number=1,
-            lesson_package_json={"title": "Chemical Reactions"},
-            validation_status="ready"
-        )
-        db.add(l_ver)
-        db.commit()
-        db.refresh(l_ver)
-
-        q1 = Question(
-            lesson_version_id=l_ver.id,
-            question_key="q_chem_1",
+def _seed_question(db, owner_id, title="Chemical Reactions"):
+    path = LearningPath(
+        owner_id=owner_id,
+        grade=10,
+        subject_id="subject-science",
+        outline_json={"title": title, "chapters": []},
+    )
+    db.add(path)
+    db.flush()
+    lesson = PathLesson(
+        path_id=path.id,
+        lesson_key=f"chem_{uuid.uuid4().hex[:6]}",
+        title=title,
+        sequence=1,
+        status="ready",
+    )
+    db.add(lesson)
+    db.flush()
+    version = LessonVersion(
+        path_lesson_id=lesson.id,
+        version_number=1,
+        lesson_package_json={"title": title},
+        validation_status="ready",
+    )
+    db.add(version)
+    db.flush()
+    db.add(
+        Question(
+            lesson_version_id=version.id,
+            question_key="q1",
             type="multiple_choice",
             prompt_json={"text": "What happens when magnesium ribbon burns in air?"},
-            answer_key_json={"correct_choice": "c"},
-            concept_ids=["chemical_reactions"]
+            answer_key_json={"answer": "c", "feedback": "Magnesium burns with a white flame."},
+            concept_ids=[CONCEPT],
+            validation_status="ready",
         )
-        db.add(q1)
-        db.commit()
-        db.refresh(q1)
+    )
+    db.commit()
+    return path, lesson, version
 
-        # 5. Student Aarav Patel attempts -> High accuracy (Demonstrated: >= 3 observations with >= 85%)
-        for i in range(3):
-            att_aarav = client.post(
-                "/api/v1/attempts",
-                headers={"x-user-id": str(aarav_id)},
-                json={
-                    "lesson_version_id": str(l_ver.id),
-                    "question_id": str(q1.id),
-                    "concept_id": "chemical_reactions",
-                    "response": {"choice": "c"},
-                    "is_correct": True,
-                    "hint_level": 0,
-                    "elapsed_seconds": 30 + (i * 10)
-                }
-            )
-            assert att_aarav.status_code == 200
 
-        # 6. Student Diya Rao attempts -> Struggling (Developing)
-        # First incorrect attempt
-        client.post(
-            "/api/v1/attempts",
-            headers={"x-user-id": str(diya_id)},
-            json={
-                "lesson_version_id": str(l_ver.id),
-                "question_id": str(q1.id),
-                "concept_id": "chemical_reactions",
-                "response": {"choice": "a"},
-                "is_correct": False,
-                "hint_level": 1,
-                "hints_used": ["hint1"],
-                "elapsed_seconds": 60
-            }
+def _attempt(client, student_id, version, *, response, key, kind="checkpoint"):
+    result = client.post(
+        "/api/v1/attempts",
+        headers=auth_headers(student_id),
+        json={
+            "lessonVersionId": str(version.id),
+            "questionKey": "q1",
+            "response": response,
+            "hintLevel": 0,
+            "hintsUsed": [],
+            "elapsedSeconds": 45,
+            "attemptKind": kind,
+            "syncIdempotencyKey": key,
+        },
+    )
+    assert result.status_code == 200, result.text
+    return result.json()
+
+
+def test_multi_user_evidence_matrix_tracks_real_server_graded_attempts(client, db):
+    teacher_id = _profile(db, "teacher", "Mrs. Sharma")
+    aarav_id = _profile(db, name="Aarav Patel")
+    diya_id = _profile(db, name="Diya Rao")
+    rohan_id = _profile(db, name="Rohan Gupta")
+
+    classroom = client.post(
+        "/api/v1/teacher/classrooms",
+        headers=auth_headers(teacher_id),
+        json={
+            "name": "Class 10-A Science",
+            "grade": 10,
+            "boardId": "board-cbse",
+            "subjectScope": "subject-science",
+        },
+    )
+    assert classroom.status_code == 200, classroom.text
+    room = classroom.json()
+    assert room["subjectScope"] == "subject-science"
+    assert room["joinCode"]
+
+    for student_id, name in [(aarav_id, "Aarav"), (diya_id, "Diya"), (rohan_id, "Rohan")]:
+        joined = client.post(
+            "/api/v1/teacher/join",
+            headers=auth_headers(student_id),
+            json={"joinCode": room["joinCode"]},
         )
-        # Second incorrect attempt -> reaches threshold (2 observations), band becomes developing, triggers dynamic remediation!
-        att_diya = client.post(
-            "/api/v1/attempts",
-            headers={"x-user-id": str(diya_id)},
-            json={
-                "lesson_version_id": str(l_ver.id),
-                "question_id": str(q1.id),
-                "concept_id": "chemical_reactions",
-                "response": {"choice": "b"},
-                "is_correct": False,
-                "hint_level": 2,
-                "hints_used": ["hint1", "hint2"],
-                "elapsed_seconds": 90
-            }
+        assert joined.status_code == 200, f"{name} join failed: {joined.text}"
+        assert joined.json()["status"] == "joined"
+
+    assert (
+        db.query(ClassroomMembership)
+        .filter(ClassroomMembership.classroom_id == uuid.UUID(room["id"]))
+        .count()
+        == 3
+    )
+
+    aarav_path, _, aarav_version = _seed_question(db, aarav_id)
+    diya_path, diya_lesson, diya_version = _seed_question(db, diya_id)
+    rohan_path, _, rohan_version = _seed_question(db, rohan_id)
+
+    for index in range(3):
+        result = _attempt(
+            client, aarav_id, aarav_version,
+            response="c", key=f"aarav-{index}",
         )
-        assert att_diya.status_code == 200
-        diya_res = att_diya.json()
-        assert diya_res.get("nextAction", {}).get("remediationInjected") is True
+        assert result["isCorrect"] is True
+    assert result["mastery"]["band"] == "demonstrated"
 
-        # Verify remediation lesson was physically injected into path_lessons!
-        injected_lesson = db.query(PathLesson).filter(
-            PathLesson.path_id == path.id,
-            PathLesson.sequence == 2
-        ).first()
-        assert injected_lesson is not None
-        assert "Foundations & Guided Refresher" in injected_lesson.title
+    first_wrong = _attempt(
+        client, diya_id, diya_version,
+        response="a", key="diya-0",
+    )
+    assert first_wrong["isCorrect"] is False
+    second_wrong = _attempt(
+        client, diya_id, diya_version,
+        response="b", key="diya-1",
+    )
+    assert second_wrong["isCorrect"] is False
+    assert second_wrong["mastery"]["band"] == "developing"
+    assert second_wrong["nextAction"]["remediationInjected"] is True
 
-        # 7. Student Rohan Gupta attempts -> Moderate (Approaching)
-        # One incorrect, then one correct
-        client.post(
-            "/api/v1/attempts",
-            headers={"x-user-id": str(rohan_id)},
-            json={
-                "lesson_version_id": str(l_ver.id),
-                "question_id": str(q1.id),
-                "concept_id": "chemical_reactions",
-                "response": {"choice": "b"},
-                "is_correct": False,
-                "hint_level": 1,
-                "elapsed_seconds": 60
-            }
+    remediation = (
+        db.query(PathLesson)
+        .filter(
+            PathLesson.path_id == diya_path.id,
+            PathLesson.lesson_key.like("rem_%"),
         )
-        client.post(
-            "/api/v1/attempts",
-            headers={"x-user-id": str(rohan_id)},
-            json={
-                "lesson_version_id": str(l_ver.id),
-                "question_id": str(q1.id),
-                "concept_id": "chemical_reactions",
-                "response": {"choice": "c"},
-                "is_correct": True,
-                "hint_level": 0,
-                "elapsed_seconds": 40
-            }
+        .first()
+    )
+    assert remediation is not None
+    assert remediation.sequence == diya_lesson.sequence + 1
+    assert "Foundations & Guided Refresher" in remediation.title
+    assert remediation.status == "queued"
+
+    for index, response in enumerate(["b", "c", "c"]):
+        result = _attempt(
+            client, rohan_id, rohan_version,
+            response=response, key=f"rohan-{index}",
         )
+    assert result["mastery"]["band"] == "approaching"
 
-        # 8. Teacher queries Evidence Matrix for the classroom
-        matrix_resp = client.get(
-            f"/api/v1/teacher/classrooms/{classroom_id}/evidence-matrix",
-            headers={"x-user-id": str(teacher_id)}
-        )
-        assert matrix_resp.status_code == 200, f"Matrix fetch failed: {matrix_resp.text}"
-        m_data = matrix_resp.json()
-        assert m_data["totalStudents"] == 3
-        matrix_rows = {row["studentId"]: row for row in m_data["matrix"]}
+    matrix_response = client.get(
+        f"/api/v1/teacher/classrooms/{room['id']}/evidence-matrix",
+        headers=auth_headers(teacher_id),
+    )
+    assert matrix_response.status_code == 200, matrix_response.text
+    matrix = matrix_response.json()
+    assert matrix["totalStudents"] == 3
+    rows = {row["studentId"]: row for row in matrix["matrix"]}
 
-        # Verify live evidence bands for all 3 students
-        assert str(aarav_id) in matrix_rows
-        assert matrix_rows[str(aarav_id)]["evidenceBand"] == "demonstrated"
+    assert rows[str(aarav_id)]["studentName"] == "Aarav Patel"
+    assert rows[str(aarav_id)]["evidenceBand"] == "demonstrated"
+    assert rows[str(diya_id)]["evidenceBand"] == "developing"
+    assert rows[str(rohan_id)]["evidenceBand"] == "approaching"
+    assert rows[str(diya_id)]["concepts"] == [
+        {
+            "conceptId": CONCEPT,
+            "band": "developing",
+            "score": 0.0,
+            "evidenceCount": 2,
+            "calculatedAt": rows[str(diya_id)]["concepts"][0]["calculatedAt"],
+        }
+    ]
 
-        assert str(diya_id) in matrix_rows
-        assert matrix_rows[str(diya_id)]["evidenceBand"] == "developing"
+    scoped_evidence = client.get(
+        f"/api/v1/teacher/evidence?classroomId={room['id']}",
+        headers=auth_headers(teacher_id),
+    )
+    assert scoped_evidence.status_code == 200
+    concept_row = scoped_evidence.json()[0]
+    assert concept_row["conceptId"] == CONCEPT
+    assert concept_row["totalAttempts"] == 8
+    assert concept_row["correctAttempts"] == 5
+    assert concept_row["incorrectAttempts"] == 3
 
-        assert str(rohan_id) in matrix_rows
-        assert matrix_rows[str(rohan_id)]["evidenceBand"] in ("approaching", "developing")
+    recommendation = client.post(
+        "/api/v1/teacher/recommendations",
+        headers=auth_headers(teacher_id),
+        json={
+            "classroomId": room["id"],
+            "studentId": str(diya_id),
+            "conceptId": CONCEPT,
+            "actionType": "targeted_review",
+            "notes": "Review foundational chemical equations before the next check.",
+        },
+    )
+    assert recommendation.status_code == 200, recommendation.text
+    recommendation_body = recommendation.json()
+    assert recommendation_body["status"] == "proposed"
+    assert recommendation_body["reason"]["evidence"]["band"] == "developing"
+    assert recommendation_body["reason"]["evidence"]["evidenceCount"] == 2
 
-        # 9. Teacher issues targeted recommendation to Diya Rao
-        rec_resp = client.post(
-            "/api/v1/teacher/recommendations",
-            headers={"x-user-id": str(teacher_id)},
-            json={
-                "classroomId": classroom_id,
-                "studentId": str(diya_id),
-                "conceptId": "chemical_reactions",
-                "actionType": "recommend_prerequisite",
-                "notes": "Please review foundational chemical equations before proceeding to acid-base titrations."
-            }
-        )
-        assert rec_resp.status_code == 200
-        rec_data = rec_resp.json()
-        assert rec_data["status"] == "active"
+    summary = client.get("/api/v1/study/summary", headers=auth_headers(diya_id)).json()
+    suggestion = summary["suggestions"][0]
+    assert suggestion["id"] == recommendation_body["id"]
+    assert suggestion["status"] == "proposed"
+    assert suggestion["conceptId"] == CONCEPT
+    assert suggestion["teacherName"] == "Mrs. Sharma"
+    assert "developing" in suggestion["explanation"]
 
-        # 10. Diya queries her student dashboard
-        dash_resp = client.get(
-            "/api/v1/profile/dashboard",
-            headers={"x-user-id": str(diya_id)}
-        )
-        assert dash_resp.status_code == 200
-        dash_data = dash_resp.json()
+    dashboard_response = client.get(
+        "/api/v1/profile/dashboard", headers=auth_headers(diya_id)
+    )
+    assert dashboard_response.status_code == 200
+    dashboard = dashboard_response.json()
+    assert dashboard["profile"]["displayName"] == "Diya Rao"
+    assert dashboard["stats"]["currentStreak"] >= 1
+    assert dashboard["stats"]["totalQuestionsAttempted"] == 2
+    assert [room_row["name"] for room_row in dashboard["classrooms"]] == ["Class 10-A Science"]
+    assert dashboard["profile"]["dailyGoalMinutes"] is None
 
-        assert dash_data["profile"]["displayName"] == "Diya Rao"
-        assert dash_data["stats"]["currentStreak"] >= 1
-        assert len(dash_data["classrooms"]) == 1
-        assert dash_data["classrooms"][0]["name"] == "Class 10-A Science"
-        assert len(dash_data["conceptMastery"]) >= 1
+    mastery = next(
+        item for item in dashboard["conceptMastery"] if item["conceptId"] == CONCEPT
+    )
+    assert mastery["band"] == "developing"
+    assert mastery["needsRemediation"] is True
+    assert any(day["count"] > 0 for day in dashboard["activityHeatmap"])
 
-        # Check concept mastery alert
-        chem_mastery = next(c for c in dash_data["conceptMastery"] if c["conceptId"] == "chemical_reactions")
-        assert chem_mastery["band"] == "developing"
-        assert chem_mastery["needsRemediation"] is True
+    responded = client.post(
+        f"/api/v1/study/recommendations/{recommendation_body['id']}/respond",
+        headers=auth_headers(diya_id),
+        json={"decision": "accept"},
+    )
+    assert responded.status_code == 200
+    assert responded.json()["status"] == "accepted"
+    assert client.get("/api/v1/study/summary", headers=auth_headers(diya_id)).json()[
+        "suggestions"
+    ] == []
 
-        # Check heatmap has activity recorded
-        active_cells = [d for d in dash_data["activityHeatmap"] if d["count"] > 0]
-        assert len(active_cells) >= 1
-
-        print("SUCCESS: 3 Students + 1 Teacher Multi-User Verification Passed Completely!")
-
-    finally:
-        # Clean up created test entities
-        try:
-            from app.models.jobs import GenerationJob
-            from app.models.learning import ConceptEvidence
-            db.query(GenerationJob).filter(GenerationJob.path_id == path.id).delete()
-            db.query(ConceptEvidence).filter(ConceptEvidence.owner_id.in_([teacher_id, aarav_id, diya_id, rohan_id])).delete()
-            db.query(TeacherAction).filter(TeacherAction.classroom_id == uuid.UUID(classroom_id)).delete()
-            db.query(ClassroomMembership).filter(ClassroomMembership.classroom_id == uuid.UUID(classroom_id)).delete()
-            db.query(Classroom).filter(Classroom.id == uuid.UUID(classroom_id)).delete()
-            db.query(StudyEvent).filter(StudyEvent.owner_id.in_([teacher_id, aarav_id, diya_id, rohan_id])).delete()
-            db.query(ConceptMasterySnapshot).filter(ConceptMasterySnapshot.owner_id.in_([teacher_id, aarav_id, diya_id, rohan_id])).delete()
-            db.query(QuizAttempt).filter(QuizAttempt.owner_id.in_([teacher_id, aarav_id, diya_id, rohan_id])).delete()
-            db.query(Question).filter(Question.lesson_version_id == l_ver.id).delete()
-            db.query(LessonVersion).filter(LessonVersion.id == l_ver.id).delete()
-            db.query(PathLesson).filter(PathLesson.path_id == path.id).delete()
-            db.query(LearningPath).filter(LearningPath.id == path.id).delete()
-            db.query(UserProfile).filter(UserProfile.id.in_([teacher_id, aarav_id, diya_id, rohan_id])).delete()
-            db.commit()
-        except Exception:
-            pass
-        finally:
-            db.close()
+    assert (
+        db.query(ConceptMasterySnapshot)
+        .filter(ConceptMasterySnapshot.owner_id == aarav_id)
+        .count()
+        == 1
+    )
+    assert aarav_path.owner_id == aarav_id
+    assert rohan_path.owner_id == rohan_id

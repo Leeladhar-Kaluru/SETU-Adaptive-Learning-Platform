@@ -1,348 +1,601 @@
-import React, { useState, useEffect } from 'react';
-import { ArrowLeft, Users, BookOpen, Send, CheckCircle2, TrendingUp } from 'lucide-react';
-import { useNavigate } from 'react-router-dom';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import {
+  api,
+  ClassroomData,
+  EvidenceBand,
+  EvidenceConceptRow,
+  EvidenceMatrixRow,
+  TeacherActionRow,
+} from '../services/api';
+import styles from './TeacherDashboardPage.module.css';
 
-interface EvidenceItem {
-  conceptId: string;
-  conceptName: string;
-  totalAttempts: number;
-  correctAttempts: number;
-  accuracyRate: number;
-  masteryBand: 'sparse' | 'developing' | 'approaching' | 'demonstrated';
-  lastAssessedAt: string;
+const BAND_LABEL: Record<EvidenceBand, string> = {
+  not_enough_evidence: 'Not enough evidence',
+  developing: 'Developing',
+  approaching: 'Approaching',
+  demonstrated: 'Demonstrated',
+};
+
+const ACTION_LABEL: Record<string, string> = {
+  reinforce_foundations: 'Stay with this unit',
+  advance_challenge: 'Move to the next unit',
+  targeted_review: 'Review the worked example',
+};
+
+const STATUS_LABEL: Record<TeacherActionRow['status'], string> = {
+  proposed: 'Proposed',
+  accepted: 'Accepted',
+  dismissed: 'Dismissed',
+  superseded: 'Superseded',
+};
+
+function conceptLabel(conceptId: string): string {
+  const words = conceptId.replace(/^concept[-_]/, '').replace(/[-_]/g, ' ');
+  return words.charAt(0).toUpperCase() + words.slice(1);
 }
 
-export const TeacherDashboardPage: React.FC = () => {
-  const navigate = useNavigate();
-  const [selectedGrade, setSelectedGrade] = useState<number>(9);
-  const [selectedSubject, setSelectedSubject] = useState<string>('SCIENCE');
-  const [evidenceList, setEvidenceList] = useState<EvidenceItem[]>([]);
-  const [loading, setLoading] = useState(true);
+function bandClass(band: EvidenceBand): string {
+  if (band === 'demonstrated') return styles.bandDemonstrated;
+  if (band === 'approaching') return styles.bandApproaching;
+  if (band === 'developing') return styles.bandDeveloping;
+  return styles.bandSparse;
+}
 
-  // Recommendation form
-  const [recConcept, setRecConcept] = useState('sci-diffusion');
+type Feedback = { kind: 'ok' | 'error'; message: string } | null;
+
+export const TeacherDashboardPage: React.FC = () => {
+  const [classrooms, setClassrooms] = useState<ClassroomData[]>([]);
+  const [selectedClassroomId, setSelectedClassroomId] = useState<string | null>(null);
+  const [isLoadingClassrooms, setIsLoadingClassrooms] = useState(true);
+  const [classroomError, setClassroomError] = useState<string | null>(null);
+  const [isCreatingClassroom, setIsCreatingClassroom] = useState(false);
+  const [newClassName, setNewClassName] = useState('');
+  const [newClassGrade, setNewClassGrade] = useState<number>(9);
+  const [newClassBoard, setNewClassBoard] = useState('board-cbse');
+  const [newClassSubject, setNewClassSubject] = useState('SCIENCE');
+  const [isSubmittingClass, setIsSubmittingClass] = useState(false);
+  const [createError, setCreateError] = useState<string | null>(null);
+
+  const [evidenceMatrix, setEvidenceMatrix] = useState<EvidenceMatrixRow[]>([]);
+  const [actions, setActions] = useState<TeacherActionRow[]>([]);
+  const [isLoadingMatrix, setIsLoadingMatrix] = useState(false);
+  const [matrixError, setMatrixError] = useState<string | null>(null);
+
+  const [recStudentId, setRecStudentId] = useState('');
+  const [recConcept, setRecConcept] = useState('');
   const [recAction, setRecAction] = useState('reinforce_foundations');
-  const [recNotes, setRecNotes] = useState('Review diffusion gradient diagrams and complete the Cell Membrane checkpoint test.');
-  const [submittingRec, setSubmittingRec] = useState(false);
-  const [savedSuccess, setSavedSuccess] = useState(false);
+  const [recNote, setRecNote] = useState('');
+  const [isSubmittingRec, setIsSubmittingRec] = useState(false);
+  const [recFeedback, setRecFeedback] = useState<Feedback>(null);
+  const [copied, setCopied] = useState(false);
+
+  const fetchClassrooms = useCallback(async () => {
+    setIsLoadingClassrooms(true);
+    setClassroomError(null);
+    try {
+      const res = await api.getClassrooms();
+      const list = Array.isArray(res) ? res : (res as { classrooms?: ClassroomData[] }).classrooms || [];
+      setClassrooms(list);
+      setSelectedClassroomId((current) =>
+        current && list.some((room) => room.id === current) ? current : list[0]?.id ?? null
+      );
+      if (list.length === 0) setIsCreatingClassroom(true);
+    } catch (err: unknown) {
+      setClassrooms([]);
+      setClassroomError(
+        err instanceof Error ? err.message : 'Classrooms could not be loaded from SETU.'
+      );
+    } finally {
+      setIsLoadingClassrooms(false);
+    }
+  }, []);
 
   useEffect(() => {
-    fetchEvidence();
-  }, [selectedGrade, selectedSubject]);
+    void fetchClassrooms();
+  }, [fetchClassrooms]);
 
-  const fetchEvidence = async () => {
-    setLoading(true);
+  const fetchEvidenceMatrix = useCallback(async (classroomId: string) => {
+    setIsLoadingMatrix(true);
+    setMatrixError(null);
     try {
-      const res = await fetch(`/api/v1/teacher/evidence?grade=${selectedGrade}&subject=${selectedSubject}`);
-      if (res.ok) {
-        const data = await res.json();
-        setEvidenceList(data);
-      } else {
-        // Fallback evidence from recent student work
-        setEvidenceList(getDemoEvidence());
-      }
-    } catch {
-      setEvidenceList(getDemoEvidence());
+      const res = await api.getEvidenceMatrix(classroomId);
+      setEvidenceMatrix(res.matrix || []);
+      setActions(res.actions || []);
+    } catch (err: unknown) {
+      setEvidenceMatrix([]);
+      setActions([]);
+      setMatrixError(
+        err instanceof Error ? err.message : 'The roster could not be loaded from SETU.'
+      );
     } finally {
-      setLoading(false);
+      setIsLoadingMatrix(false);
     }
-  };
+  }, []);
 
-  const getDemoEvidence = (): EvidenceItem[] => [
-    {
-      conceptId: 'sci-membrane-perm',
-      conceptName: 'Plasma Membrane Selective Permeability',
-      totalAttempts: 12,
-      correctAttempts: 11,
-      accuracyRate: 0.92,
-      masteryBand: 'demonstrated',
-      lastAssessedAt: 'Today'
-    },
-    {
-      conceptId: 'sci-diffusion',
-      conceptName: 'Diffusion & Concentration Gradients',
-      totalAttempts: 15,
-      correctAttempts: 10,
-      accuracyRate: 0.67,
-      masteryBand: 'approaching',
-      lastAssessedAt: 'Today'
-    },
-    {
-      conceptId: 'sci-osmosis-tonicity',
-      conceptName: 'Osmosis in Hypotonic/Hypertonic Solutions',
-      totalAttempts: 8,
-      correctAttempts: 4,
-      accuracyRate: 0.50,
-      masteryBand: 'developing',
-      lastAssessedAt: 'Yesterday'
-    },
-    {
-      conceptId: 'sci-active-transport',
-      conceptName: 'Active Transport vs Passive Transport',
-      totalAttempts: 2,
-      correctAttempts: 1,
-      accuracyRate: 0.50,
-      masteryBand: 'sparse',
-      lastAssessedAt: 'Yesterday'
+  useEffect(() => {
+    if (!selectedClassroomId) return;
+    void fetchEvidenceMatrix(selectedClassroomId);
+    const timer = window.setInterval(() => {
+      void fetchEvidenceMatrix(selectedClassroomId);
+    }, 15000);
+    return () => window.clearInterval(timer);
+  }, [selectedClassroomId, fetchEvidenceMatrix]);
+
+  const selected = classrooms.find((room) => room.id === selectedClassroomId) || null;
+
+  const selectedRow = evidenceMatrix.find((row) => row.studentId === recStudentId) || null;
+  const selectableStudents = evidenceMatrix.filter((row) => !row.profileMissing);
+  const selectedConcept: EvidenceConceptRow | null =
+    selectedRow?.concepts.find((concept) => concept.conceptId === recConcept) || null;
+
+  const studentNameById = useMemo(() => {
+    const map = new Map<string, string>();
+    evidenceMatrix.forEach((row) => map.set(row.studentId, row.studentName));
+    return map;
+  }, [evidenceMatrix]);
+
+  useEffect(() => {
+    if (!selectedRow) {
+      if (recStudentId) setRecStudentId('');
+      if (recConcept) setRecConcept('');
+      return;
     }
-  ];
+    if (recConcept && !selectedRow.concepts.some((concept) => concept.conceptId === recConcept)) {
+      setRecConcept('');
+    }
+  }, [selectedRow, recStudentId, recConcept]);
 
-  const handleCreateRecommendation = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setSubmittingRec(true);
-    setSavedSuccess(false);
-
+  const handleCreateClassroom = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!newClassName.trim()) {
+      setCreateError('Write a classroom name first.');
+      return;
+    }
+    setIsSubmittingClass(true);
+    setCreateError(null);
     try {
-      const res = await fetch('/api/v1/teacher/recommendations', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          grade: selectedGrade,
-          subject: selectedSubject,
-          conceptId: recConcept,
-          actionType: recAction,
-          notes: recNotes
-        })
+      const created = await api.createClassroom({
+        name: newClassName.trim(),
+        grade: newClassGrade,
+        boardId: newClassBoard,
+        subjectScope: newClassSubject,
       });
-
-      if (res.ok) {
-        setSavedSuccess(true);
-        setTimeout(() => setSavedSuccess(false), 4000);
-      }
-    } catch (err) {
-      console.warn('Could not post recommendation:', err);
-      // Still show UI success feedback for teacher workflow
-      setSavedSuccess(true);
-      setTimeout(() => setSavedSuccess(false), 4000);
+      setClassrooms((prev) => [created, ...prev]);
+      setSelectedClassroomId(created.id);
+      setIsCreatingClassroom(false);
+      setNewClassName('');
+    } catch (err: unknown) {
+      setCreateError(
+        err instanceof Error ? err.message : 'SETU could not create the classroom.'
+      );
     } finally {
-      setSubmittingRec(false);
+      setIsSubmittingClass(false);
     }
   };
 
-  const getBandBadge = (band: string) => {
-    switch (band) {
-      case 'demonstrated':
-        return { label: 'Demonstrated Mastery', bg: '#E8F5F0', color: '#23795B', border: '#A3D9C4' };
-      case 'approaching':
-        return { label: 'Approaching Proficiency', bg: '#EEF1FC', color: '#4055D9', border: '#BDC8DA' };
-      case 'developing':
-        return { label: 'Developing / Needs Support', bg: '#FDF5EB', color: '#A65B12', border: '#F1CE9C' };
-      default:
-        return { label: 'Sparse Evidence', bg: '#FAFAF8', color: '#7E8B9F', border: '#D9DEEA' };
+  const handleSelectStudent = (studentId: string) => {
+    setRecStudentId(studentId);
+    setRecConcept('');
+    setRecFeedback(null);
+  };
+
+  const handleSendRecommendation = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!selectedClassroomId) return;
+    if (!recStudentId) {
+      setRecFeedback({ kind: 'error', message: 'Choose a student first.' });
+      return;
+    }
+    if (!selectedConcept) {
+      setRecFeedback({ kind: 'error', message: 'Choose a topic that has evidence.' });
+      return;
+    }
+    if (!recNote.trim()) {
+      setRecFeedback({ kind: 'error', message: 'Write the suggestion.' });
+      return;
+    }
+    setIsSubmittingRec(true);
+    setRecFeedback(null);
+    try {
+      const created = await api.addRecommendation({
+        classroomId: selectedClassroomId,
+        studentId: recStudentId,
+        conceptId: selectedConcept.conceptId,
+        actionType: recAction,
+        notes: recNote.trim(),
+      });
+      setActions((prev) => [
+        {
+          id: created.id,
+          studentId: recStudentId,
+          conceptId: selectedConcept.conceptId,
+          actionType: created.actionType,
+          notes: created.notes,
+          status: (created.status as TeacherActionRow['status']) || 'proposed',
+          createdAt: new Date().toISOString(),
+        },
+        ...prev,
+      ]);
+      setRecFeedback({ kind: 'ok', message: 'Suggestion sent to that student.' });
+      setRecNote('');
+    } catch (err: unknown) {
+      setRecFeedback({
+        kind: 'error',
+        message: err instanceof Error ? err.message : 'SETU could not send the suggestion.',
+      });
+    } finally {
+      setIsSubmittingRec(false);
     }
   };
+
+  const copyCode = async () => {
+    if (!selected?.joinCode) return;
+    await navigator.clipboard.writeText(selected.joinCode);
+    setCopied(true);
+    window.setTimeout(() => setCopied(false), 1500);
+  };
+
+  const canSend =
+    Boolean(selectedClassroomId) &&
+    Boolean(recStudentId) &&
+    Boolean(selectedConcept) &&
+    Boolean(recNote.trim()) &&
+    !isSubmittingRec;
 
   return (
-    <div style={{ maxWidth: '1040px', margin: '0 auto', padding: '32px 24px', display: 'flex', flexDirection: 'column', gap: '28px' }}>
-      <div>
-        <button onClick={() => navigate('/')} style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', color: '#4A5873', fontSize: '13px', marginBottom: '8px', cursor: 'pointer' }}>
-          <ArrowLeft size={14} /> Back to Desk
-        </button>
-        <h1 style={{ fontSize: '24px', fontWeight: 700, color: '#15233B' }}>Teacher Evidence & Adaptive Desk</h1>
-        <p style={{ fontSize: '14px', color: '#4A5873' }}>
-          Real learner evidence aggregated from textbook checkpoints and guided practice. Edit pedagogical recommendations to guide subsequent lesson paths.
+    <div className={styles.page}>
+      <header>
+        <h1>Classroom</h1>
+        <p className={styles.lede}>
+          Members, study time, and the unit they last opened. Nothing here is filled in until a
+          student joins and studies.
         </p>
+      </header>
+
+      <div className={styles.toolbar}>
+        {isLoadingClassrooms && <span className={styles.loadingText}>Loading classrooms…</span>}
+        {classrooms.map((room) => (
+          <button
+            key={room.id}
+            type="button"
+            className={room.id === selectedClassroomId ? `${styles.chip} ${styles.chipOn}` : styles.chip}
+            onClick={() => setSelectedClassroomId(room.id)}
+          >
+            {room.name}
+          </button>
+        ))}
+        <button
+          type="button"
+          className={styles.secondary}
+          onClick={() => setIsCreatingClassroom((open) => !open)}
+        >
+          New classroom
+        </button>
       </div>
 
-      {/* Class & Subject Filter Row */}
-      <div style={{ display: 'flex', gap: '16px', background: '#FFFFFF', padding: '16px 20px', borderRadius: '10px', border: '1px solid #D9DEEA', alignItems: 'center' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-          <Users size={16} color="#4055D9" />
-          <span style={{ fontSize: '13px', fontWeight: 600, color: '#15233B' }}>Class / Grade:</span>
-          {[6, 7, 8, 9, 10].map(g => (
-            <button
-              key={g}
-              onClick={() => setSelectedGrade(g)}
-              style={{
-                padding: '4px 10px',
-                borderRadius: '6px',
-                fontSize: '13px',
-                fontWeight: 600,
-                background: selectedGrade === g ? '#4055D9' : '#FAFAF8',
-                color: selectedGrade === g ? '#FFFFFF' : '#4A5873',
-                border: '1px solid #D9DEEA'
-              }}
-            >
-              Class {g}
-            </button>
-          ))}
+      {classroomError && (
+        <div className={styles.errorBox} role="alert">
+          <strong>SETU could not load your classrooms.</strong> {classroomError}
+          <button type="button" className={styles.inlineRetry} onClick={() => void fetchClassrooms()}>
+            Retry
+          </button>
         </div>
+      )}
 
-        <div style={{ height: '24px', width: '1px', background: '#D9DEEA', margin: '0 8px' }} />
-
-        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-          <BookOpen size={16} color="#4055D9" />
-          <span style={{ fontSize: '13px', fontWeight: 600, color: '#15233B' }}>Subject:</span>
-          {['SCIENCE', 'MATHEMATICS'].map(s => (
-            <button
-              key={s}
-              onClick={() => setSelectedSubject(s)}
-              style={{
-                padding: '4px 10px',
-                borderRadius: '6px',
-                fontSize: '13px',
-                fontWeight: 600,
-                background: selectedSubject === s ? '#4055D9' : '#FAFAF8',
-                color: selectedSubject === s ? '#FFFFFF' : '#4A5873',
-                border: '1px solid #D9DEEA'
-              }}
-            >
-              {s}
-            </button>
-          ))}
-        </div>
-      </div>
-
-      {/* Evidence Matrix Table */}
-      <div style={{ background: '#FFFFFF', border: '1px solid #D9DEEA', borderRadius: '10px', padding: '24px', boxShadow: '0 1px 3px rgba(0,0,0,0.04)' }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
-          <div>
-            <h2 style={{ fontSize: '18px', fontWeight: 700, color: '#15233B' }}>Learner Concept Evidence Matrix</h2>
-            <p style={{ fontSize: '13px', color: '#7E8B9F' }}>Ground truth evidence derived strictly from student question attempts</p>
+      {isCreatingClassroom && (
+        <form className={styles.panel} onSubmit={handleCreateClassroom}>
+          <h2>Create a classroom</h2>
+          <div className={styles.form}>
+            <label>
+              Name
+              <input
+                required
+                value={newClassName}
+                onChange={(e) => setNewClassName(e.target.value)}
+                placeholder="Morning science"
+              />
+            </label>
+            <label>
+              Class
+              <select value={newClassGrade} onChange={(e) => setNewClassGrade(Number(e.target.value))}>
+                {[6, 7, 8, 9, 10].map((grade) => (
+                  <option key={grade} value={grade}>
+                    Class {grade}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label>
+              Board
+              <select value={newClassBoard} onChange={(e) => setNewClassBoard(e.target.value)}>
+                <option value="board-cbse">CBSE</option>
+                <option value="board-ncert">NCERT</option>
+                <option value="board-icse">ICSE</option>
+                <option value="board-state">State board</option>
+              </select>
+            </label>
+            <label>
+              Subject
+              <select value={newClassSubject} onChange={(e) => setNewClassSubject(e.target.value)}>
+                <option value="SCIENCE">Science</option>
+                <option value="MATHEMATICS">Mathematics</option>
+                <option value="SOCIAL_SCIENCE">Social science</option>
+                <option value="ENGLISH">English</option>
+                <option value="HINDI">Hindi</option>
+              </select>
+            </label>
           </div>
-          <span style={{ fontSize: '12px', color: '#4055D9', fontWeight: 600 }}>Class {selectedGrade} • {selectedSubject}</span>
-        </div>
+          {createError && (
+            <p className={styles.bad} role="alert">
+              {createError}
+            </p>
+          )}
+          <div className={styles.rowActions}>
+            <button type="submit" className={styles.primary} disabled={isSubmittingClass}>
+              {isSubmittingClass ? 'Creating…' : 'Create classroom'}
+            </button>
+          </div>
+        </form>
+      )}
 
-        {loading ? (
-          <div style={{ textAlign: 'center', padding: '32px', color: '#7E8B9F' }}>Aggregating mastery bands...</div>
+      {selected && (
+        <section className={styles.panel}>
+          <div className={styles.toolbar}>
+            <h2>{selected.name}</h2>
+            <span>
+              Join code{' '}
+              {selected.joinCode ? (
+                <strong className={styles.code}>{selected.joinCode}</strong>
+              ) : (
+                <em className={styles.codeUnavailable}>Code unavailable</em>
+              )}
+            </span>
+            <button
+              type="button"
+              className={styles.secondary}
+              onClick={copyCode}
+              disabled={!selected.joinCode}
+            >
+              {copied ? 'Copied' : 'Copy code'}
+            </button>
+          </div>
+
+          {matrixError && (
+            <div className={styles.errorBox} role="alert">
+              <strong>The roster could not be loaded.</strong> {matrixError}
+              <button
+                type="button"
+                className={styles.inlineRetry}
+                onClick={() => void fetchEvidenceMatrix(selected.id)}
+              >
+                Retry
+              </button>
+            </div>
+          )}
+
+          {isLoadingMatrix ? (
+            <p className={styles.lede}>Loading the roster…</p>
+          ) : evidenceMatrix.length === 0 ? (
+            <p className={styles.empty}>
+              No students have joined. Share the code above. Their minutes and checks will show here
+              after they study.
+            </p>
+          ) : (
+            <div className={styles.tableWrap}>
+              <table className={styles.table}>
+                <thead>
+                  <tr>
+                    <th>Student and evidenced topics</th>
+                    <th>Minutes</th>
+                    <th>Last opened</th>
+                    <th>Checks</th>
+                    <th>Change</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {evidenceMatrix.map((row) => (
+                    <tr
+                      key={row.studentId}
+                      className={row.studentId === recStudentId ? styles.rowSelected : undefined}
+                    >
+                      <td>
+                        <div className={styles.studentHead}>
+                          {row.profileMissing ? (
+                            <span className={styles.studentName}>Account removed</span>
+                          ) : (
+                            <button
+                              type="button"
+                              className={styles.studentButton}
+                              onClick={() => handleSelectStudent(row.studentId)}
+                              aria-pressed={row.studentId === recStudentId}
+                            >
+                              {row.studentName}
+                            </button>
+                          )}
+                          <span className={`${styles.band} ${bandClass(row.evidenceBand)}`}>
+                            {BAND_LABEL[row.evidenceBand]}
+                          </span>
+                        </div>
+                        {row.concepts.length === 0 ? (
+                          <p className={styles.noConcepts}>No evidenced topics yet.</p>
+                        ) : (
+                          <ul className={styles.conceptList}>
+                            {row.concepts.map((concept) => (
+                              <li key={concept.conceptId} className={styles.conceptItem}>
+                                <span className={styles.conceptName}>{conceptLabel(concept.conceptId)}</span>
+                                <span className={styles.conceptMeta}>
+                                  {BAND_LABEL[concept.band]} · {Math.round(concept.score)}% ·{' '}
+                                  {concept.evidenceCount}{' '}
+                                  {concept.evidenceCount === 1 ? 'check' : 'checks'}
+                                  {concept.calculatedAt
+                                    ? ` · ${new Date(concept.calculatedAt).toLocaleDateString()}`
+                                    : ''}
+                                </span>
+                              </li>
+                            ))}
+                          </ul>
+                        )}
+                      </td>
+                      <td>
+                        {row.minutesStudied ?? 0}
+                        <span className={styles.bars} aria-hidden="true">
+                          {(row.heatmap || []).map((day) => (
+                            <i
+                              key={day.date}
+                              style={{
+                                height: Math.max(
+                                  2,
+                                  Math.min(22, Math.round((day.seconds || 0) / 30))
+                                ),
+                                opacity: day.seconds ? 1 : 0.25,
+                              }}
+                              title={`${day.date}: ${Math.round(day.seconds / 60)} min`}
+                            />
+                          ))}
+                        </span>
+                      </td>
+                      <td>{row.readingTitle || 'Not opened yet'}</td>
+                      <td>
+                        {row.accuracyKnown
+                          ? `${Math.round(row.accuracyRate * 100)}%`
+                          : 'No checks yet'}
+                      </td>
+                      <td>
+                        {row.improvement === 'improving'
+                          ? 'Improving'
+                          : row.improvement === 'needs_support'
+                            ? 'Needs support'
+                            : row.improvement === 'steady'
+                              ? 'Steady'
+                              : 'Not enough checks'}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </section>
+      )}
+
+      <form className={styles.panel} onSubmit={handleSendRecommendation}>
+        <h2>Suggestion</h2>
+        <p className={styles.lede}>
+          This note appears on that student’s desk. It is sent only to someone who has joined this
+          classroom and has real evidence for the topic.
+        </p>
+        {recFeedback && (
+          <p className={recFeedback.kind === 'ok' ? styles.ok : styles.bad} role="status">
+            {recFeedback.message}
+          </p>
+        )}
+        <div className={styles.form}>
+          <label>
+            Student
+            <select
+              value={recStudentId}
+              onChange={(e) => handleSelectStudent(e.target.value)}
+              disabled={selectableStudents.length === 0}
+            >
+              <option value="">Choose a student</option>
+              {selectableStudents.map((row) => (
+                <option key={row.studentId} value={row.studentId}>
+                  {row.studentName}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label>
+            Topic
+            <select
+              value={recConcept}
+              onChange={(e) => setRecConcept(e.target.value)}
+              disabled={!selectedRow || selectedRow.concepts.length === 0}
+            >
+              <option value="">
+                {selectedRow && selectedRow.concepts.length === 0
+                  ? 'No evidenced topics yet'
+                  : 'Choose an evidenced topic'}
+              </option>
+              {(selectedRow?.concepts || []).map((concept) => (
+                <option key={concept.conceptId} value={concept.conceptId}>
+                  {conceptLabel(concept.conceptId)}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label>
+            Action
+            <select value={recAction} onChange={(e) => setRecAction(e.target.value)}>
+              <option value="reinforce_foundations">Stay with this unit</option>
+              <option value="advance_challenge">Move to the next unit</option>
+              <option value="targeted_review">Review the worked example</option>
+            </select>
+          </label>
+          <label>
+            Note
+            <textarea
+              rows={3}
+              value={recNote}
+              onChange={(e) => setRecNote(e.target.value)}
+              placeholder="Write what you want this student to do next."
+            />
+          </label>
+        </div>
+        {selectedConcept && (
+          <p className={styles.evidenceNote}>
+            Based on {BAND_LABEL[selectedConcept.band].toLowerCase()} evidence ·{' '}
+            {selectedConcept.evidenceCount}{' '}
+            {selectedConcept.evidenceCount === 1 ? 'check' : 'checks'}
+            {selectedConcept.calculatedAt
+              ? ` · last assessed ${new Date(selectedConcept.calculatedAt).toLocaleDateString()}`
+              : ''}
+          </p>
+        )}
+        <div className={styles.rowActions}>
+          <button type="submit" className={styles.primary} disabled={!canSend}>
+            {isSubmittingRec ? 'Sending…' : 'Send suggestion'}
+          </button>
+        </div>
+      </form>
+
+      <section className={styles.panel}>
+        <h2>Sent suggestions</h2>
+        {actions.length === 0 ? (
+          <p className={styles.lede}>No suggestions sent from this classroom yet.</p>
         ) : (
-          <div style={{ overflowX: 'auto' }}>
-            <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '13px' }}>
+          <div className={styles.tableWrap}>
+            <table className={styles.table}>
               <thead>
-                <tr style={{ borderBottom: '2px solid #D9DEEA', color: '#7E8B9F', fontWeight: 600 }}>
-                  <th style={{ padding: '12px 8px' }}>Concept</th>
-                  <th style={{ padding: '12px 8px' }}>Attempts</th>
-                  <th style={{ padding: '12px 8px' }}>Accuracy</th>
-                  <th style={{ padding: '12px 8px' }}>Adaptive Mastery Band</th>
-                  <th style={{ padding: '12px 8px' }}>Last Assessed</th>
+                <tr>
+                  <th>Student</th>
+                  <th>Topic</th>
+                  <th>Action</th>
+                  <th>Status</th>
+                  <th>Date</th>
                 </tr>
               </thead>
               <tbody>
-                {evidenceList.map(item => {
-                  const badge = getBandBadge(item.masteryBand);
-                  return (
-                    <tr key={item.conceptId} style={{ borderBottom: '1px solid #E8ECF4' }}>
-                      <td style={{ padding: '14px 8px', fontWeight: 600, color: '#15233B' }}>
-                        {item.conceptName}
-                      </td>
-                      <td style={{ padding: '14px 8px', color: '#4A5873' }}>
-                        {item.correctAttempts} / {item.totalAttempts}
-                      </td>
-                      <td style={{ padding: '14px 8px', fontWeight: 700, color: '#15233B' }}>
-                        {(item.accuracyRate * 100).toFixed(0)}%
-                      </td>
-                      <td style={{ padding: '14px 8px' }}>
-                        <span
-                          style={{
-                            padding: '3px 8px',
-                            borderRadius: '9999px',
-                            fontSize: '11px',
-                            fontWeight: 700,
-                            background: badge.bg,
-                            color: badge.color,
-                            border: `1px solid ${badge.border}`
-                          }}
-                        >
-                          {badge.label}
-                        </span>
-                      </td>
-                      <td style={{ padding: '14px 8px', color: '#7E8B9F' }}>
-                        {item.lastAssessedAt}
-                      </td>
-                    </tr>
-                  );
-                })}
+                {actions.map((action) => (
+                  <tr key={action.id}>
+                    <td>{studentNameById.get(action.studentId) || 'Student'}</td>
+                    <td>{action.conceptId ? conceptLabel(action.conceptId) : '—'}</td>
+                    <td>{ACTION_LABEL[action.actionType] || action.actionType}</td>
+                    <td>
+                      <span className={`${styles.actionStatus} ${styles[`status_${action.status}`] || ''}`}>
+                        {STATUS_LABEL[action.status] || action.status}
+                      </span>
+                    </td>
+                    <td>
+                      {action.createdAt ? new Date(action.createdAt).toLocaleDateString() : '—'}
+                    </td>
+                  </tr>
+                ))}
               </tbody>
             </table>
           </div>
         )}
-      </div>
-
-      {/* Editable Recommendation Editor */}
-      <div style={{ background: '#FFFFFF', border: '1px solid #D9DEEA', borderRadius: '10px', padding: '24px', boxShadow: '0 1px 3px rgba(0,0,0,0.04)' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px' }}>
-          <TrendingUp size={20} color="#4055D9" />
-          <h2 style={{ fontSize: '18px', fontWeight: 700, color: '#15233B' }}>Issue Pedagogical Recommendation</h2>
-        </div>
-        <p style={{ fontSize: '13px', color: '#4A5873', marginBottom: '20px' }}>
-          Teachers remain central. Set guidance to dynamically shape the next validated lesson packages generated for this class.
-        </p>
-
-        <form onSubmit={handleCreateRecommendation} style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
-            <div>
-              <label style={{ display: 'block', fontSize: '12px', fontWeight: 700, color: '#15233B', marginBottom: '6px' }}>
-                Target Concept
-              </label>
-              <select
-                value={recConcept}
-                onChange={e => setRecConcept(e.target.value)}
-                style={{ width: '100%', padding: '10px', borderRadius: '6px', border: '1px solid #D9DEEA', fontSize: '13px', background: '#FAFAF8' }}
-              >
-                <option value="sci-diffusion">Diffusion & Concentration Gradients</option>
-                <option value="sci-osmosis-tonicity">Osmosis in Hypotonic/Hypertonic Solutions</option>
-                <option value="sci-membrane-perm">Plasma Membrane Selective Permeability</option>
-                <option value="sci-active-transport">Active Transport Mechanisms</option>
-              </select>
-            </div>
-
-            <div>
-              <label style={{ display: 'block', fontSize: '12px', fontWeight: 700, color: '#15233B', marginBottom: '6px' }}>
-                Recommended Action Policy
-              </label>
-              <select
-                value={recAction}
-                onChange={e => setRecAction(e.target.value)}
-                style={{ width: '100%', padding: '10px', borderRadius: '6px', border: '1px solid #D9DEEA', fontSize: '13px', background: '#FAFAF8' }}
-              >
-                <option value="reinforce_foundations">Reinforce Foundations (Provide Worked Examples)</option>
-                <option value="assigned_remediation">Assigned Remediation (Step-by-step Visual Practice)</option>
-                <option value="advance_with_challenge">Advance with Challenge (Independent Assessment)</option>
-              </select>
-            </div>
-          </div>
-
-          <div>
-            <label style={{ display: 'block', fontSize: '12px', fontWeight: 700, color: '#15233B', marginBottom: '6px' }}>
-              Teacher Notes & Actionable Guidance
-            </label>
-            <textarea
-              value={recNotes}
-              onChange={e => setRecNotes(e.target.value)}
-              rows={3}
-              style={{ width: '100%', padding: '10px', borderRadius: '6px', border: '1px solid #D9DEEA', fontSize: '13px', fontFamily: 'inherit' }}
-            />
-          </div>
-
-          <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-            <button
-              type="submit"
-              disabled={submittingRec}
-              style={{
-                display: 'inline-flex',
-                alignItems: 'center',
-                gap: '8px',
-                padding: '10px 20px',
-                background: '#4055D9',
-                color: '#FFFFFF',
-                borderRadius: '6px',
-                fontSize: '13px',
-                fontWeight: 600,
-                cursor: 'pointer'
-              }}
-            >
-              <Send size={14} />
-              {submittingRec ? 'Saving Recommendation...' : 'Publish Teacher Recommendation'}
-            </button>
-
-            {savedSuccess && (
-              <span style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', color: '#23795B', fontSize: '13px', fontWeight: 600 }}>
-                <CheckCircle2 size={16} /> Recommendation applied to adaptive path!
-              </span>
-            )}
-          </div>
-        </form>
-      </div>
+      </section>
     </div>
   );
 };

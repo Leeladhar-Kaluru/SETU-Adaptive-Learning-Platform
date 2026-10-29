@@ -17,6 +17,8 @@ export const HomePage: React.FC = () => {
   const [materials, setMaterials] = useState<UserDocument[]>([]);
   const [selectedDocId, setSelectedDocId] = useState<string | null>(null);
   const [studySummary, setStudySummary] = useState<Awaited<ReturnType<typeof api.getStudySummary>> | null>(null);
+  const [respondingSuggestionId, setRespondingSuggestionId] = useState<string | null>(null);
+  const [suggestionErrors, setSuggestionErrors] = useState<Record<string, string>>({});
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
 
   // Classroom Join State
@@ -70,6 +72,22 @@ export const HomePage: React.FC = () => {
       setStudySummary(null);
     }
   }, [user]);
+
+  const respondToSuggestion = async (id: string, decision: 'accept' | 'dismiss') => {
+    setRespondingSuggestionId(id);
+    setSuggestionErrors((prev) => ({ ...prev, [id]: '' }));
+    try {
+      await api.respondToRecommendation(id, decision);
+      await fetchSummary();
+    } catch (err: unknown) {
+      setSuggestionErrors((prev) => ({
+        ...prev,
+        [id]: err instanceof Error ? err.message : 'SETU could not record your response.',
+      }));
+    } finally {
+      setRespondingSuggestionId(null);
+    }
+  };
 
   useEffect(() => {
     if (!user) {
@@ -587,7 +605,51 @@ export const HomePage: React.FC = () => {
         {studySummary?.suggestions?.length ? (
           <ul className={styles.notes}>
             {studySummary.suggestions.map((item) => (
-              <li key={item.id}>{item.note}</li>
+              <li key={item.id} className={styles.suggestion}>
+                <div className={styles.suggestionHead}>
+                  <strong>{item.teacherName || 'Your teacher'}</strong>
+                  {item.conceptId && (
+                    <span className={styles.suggestionTopic}>
+                      {item.conceptId.replace(/^concept[-_]/, '').replace(/[-_]/g, ' ')}
+                    </span>
+                  )}
+                </div>
+                {item.explanation && (
+                  <p className={styles.suggestionExplanation}>{item.explanation}</p>
+                )}
+                <p className={styles.suggestionNote}>{item.note}</p>
+                {suggestionErrors[item.id] && (
+                  <p className={styles.bad} role="alert">
+                    {suggestionErrors[item.id]}{' '}
+                    <button
+                      type="button"
+                      className={styles.inlineRetry}
+                      onClick={() => void respondToSuggestion(item.id, 'accept')}
+                      disabled={respondingSuggestionId === item.id}
+                    >
+                      Retry
+                    </button>
+                  </p>
+                )}
+                <div className={styles.suggestionActions}>
+                  <button
+                    type="button"
+                    className={styles.suggestionAccept}
+                    onClick={() => void respondToSuggestion(item.id, 'accept')}
+                    disabled={respondingSuggestionId === item.id}
+                  >
+                    {respondingSuggestionId === item.id ? 'Saving…' : 'Accept'}
+                  </button>
+                  <button
+                    type="button"
+                    className={styles.suggestionDismiss}
+                    onClick={() => void respondToSuggestion(item.id, 'dismiss')}
+                    disabled={respondingSuggestionId === item.id}
+                  >
+                    Dismiss
+                  </button>
+                </div>
+              </li>
             ))}
           </ul>
         ) : null}

@@ -103,26 +103,63 @@ export interface ClassroomData {
   grade: number;
   boardId: string;
   subjectScope: string;
-  joinCode: string;
+  joinCode: string | null;
   memberCount: number;
   createdAt: string;
+}
+
+export type EvidenceBand =
+  | 'not_enough_evidence'
+  | 'developing'
+  | 'approaching'
+  | 'demonstrated';
+
+export interface EvidenceConceptRow {
+  conceptId: string;
+  band: EvidenceBand;
+  score: number;
+  evidenceCount: number;
+  calculatedAt: string | null;
 }
 
 export interface EvidenceMatrixRow {
   studentId: string;
   studentName: string;
+  profileMissing?: boolean;
+  concepts: EvidenceConceptRow[];
   conceptsDemonstrated: number;
   totalConcepts: number;
   accuracyRate: number;
   accuracyKnown?: boolean;
   recentAttemptsCount: number;
-  evidenceBand: 'sparse' | 'developing' | 'approaching' | 'demonstrated';
+  evidenceBand: EvidenceBand;
   lastActive: string;
   minutesStudied?: number;
   readingTitle?: string | null;
   improvement?: string;
   heatmap?: Array<{ date: string; seconds: number }>;
   focus?: string;
+}
+
+export interface TeacherActionRow {
+  id: string;
+  studentId: string;
+  conceptId: string;
+  actionType: string;
+  notes: string;
+  status: 'proposed' | 'accepted' | 'dismissed' | 'superseded';
+  createdAt: string;
+}
+
+export interface EvidenceMatrixResponse {
+  classroomId: string;
+  name?: string;
+  grade?: number;
+  subjectScope?: string;
+  joinCode?: string | null;
+  totalStudents: number;
+  matrix: EvidenceMatrixRow[];
+  actions: TeacherActionRow[];
 }
 
 export interface DashboardStats {
@@ -418,14 +455,31 @@ export const api = {
     });
   },
 
-  async getEvidenceMatrix(classroomId: string): Promise<{ classroomId: string; totalStudents: number; matrix: EvidenceMatrixRow[] }> {
-    return request<{ classroomId: string; totalStudents: number; matrix: EvidenceMatrixRow[] }>(`/teacher/classrooms/${classroomId}/evidence-matrix`);
+  async getEvidenceMatrix(classroomId: string): Promise<EvidenceMatrixResponse> {
+    return request<EvidenceMatrixResponse>(`/teacher/classrooms/${classroomId}/evidence-matrix`);
   },
 
-  async addRecommendation(data: { classroomId: string; studentId: string; conceptId: string; actionType: string; notes: string }): Promise<any> {
-    return request<any>('/teacher/recommendations', {
+  async addRecommendation(data: { classroomId: string; studentId: string; conceptId: string; actionType: string; notes: string }): Promise<{
+    id: string;
+    status: string;
+    actionType: string;
+    conceptId: string;
+    notes: string;
+    reason: {
+      evidence?: EvidenceConceptRow;
+      [key: string]: unknown;
+    };
+  }> {
+    return request('/teacher/recommendations', {
       method: 'POST',
       body: JSON.stringify(data)
+    });
+  },
+
+  async respondToRecommendation(actionId: string, decision: 'accept' | 'dismiss'): Promise<{ id: string; status: string }> {
+    return request(`/study/recommendations/${actionId}/respond`, {
+      method: 'POST',
+      body: JSON.stringify({ decision }),
     });
   },
 
@@ -447,6 +501,7 @@ export const api = {
       status?: string;
       explanation?: string | null;
       teacherName?: string | null;
+      createdAt?: string | null;
     }>;
   }> {
     return request('/study/summary');

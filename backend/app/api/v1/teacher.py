@@ -1,22 +1,22 @@
 import uuid
 import random
-import string
 import datetime
 from fastapi import APIRouter, Depends, HTTPException, Query
-from pydantic import BaseModel
-from typing import Optional, List, Dict, Any
+from pydantic import BaseModel, Field
+from typing import Optional, Literal, Dict, Any
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 from app.core.database import get_db
 from app.core.security import get_current_user_id, get_current_teacher_id
 from app.models.classroom import Classroom, ClassroomMembership, TeacherAction
-from app.models.learning import ConceptEvidence, ConceptMasterySnapshot, QuizAttempt
+from app.models.learning import ConceptEvidence, ConceptMasterySnapshot
 from app.models.profiles import UserProfile
 from app.api.v1.study import summarize_student
 
 router = APIRouter()
 
 JOIN_CODE_ATTEMPTS = 12
+EVIDENCE_RANK = {"not_enough_evidence": -1, "developing": 0, "approaching": 1, "demonstrated": 2}
 
 
 def generate_join_code(db: Session) -> Optional[str]:
@@ -29,21 +29,42 @@ def generate_join_code(db: Session) -> Optional[str]:
             return code
     return None
 
+
+def _owned_classroom(db: Session, classroom_id: uuid.UUID, teacher_id: uuid.UUID) -> Classroom:
+    classroom = db.query(Classroom).filter(
+        Classroom.id == classroom_id,
+        Classroom.owner_teacher_id == teacher_id,
+    ).first()
+    if not classroom:
+        raise HTTPException(status_code=404, detail="Classroom not found")
+    return classroom
+
+
+def _active_member_ids(db: Session, classroom_id: uuid.UUID) -> list[uuid.UUID]:
+    return [
+        row[0]
+        for row in db.query(ClassroomMembership.student_id).filter(
+            ClassroomMembership.classroom_id == classroom_id,
+            ClassroomMembership.status == "active",
+        ).all()
+    ]
+
+
 class ClassroomCreate(BaseModel):
-    name: str
+    name: str = Field(min_length=1, max_length=120)
     grade: int = 9
     boardId: Optional[str] = "board-cbse"
     subjectScope: str = "SCIENCE"
 
 class JoinClassroomRequest(BaseModel):
-    joinCode: str
+    joinCode: str = Field(min_length=1, max_length=20)
 
 class RecommendationCreate(BaseModel):
     classroomId: uuid.UUID
     studentId: uuid.UUID
-    conceptId: str
-    actionType: str
-    notes: str
+    conceptId: str = Field(min_length=1, max_length=100)
+    actionType: Literal["reinforce_foundations", "advance_challenge", "targeted_review"]
+    notes: str = Field(min_length=3, max_length=1000)
 
 @router.get("/classrooms")
 def list_teacher_classrooms(
@@ -160,12 +181,7 @@ def get_classroom_evidence_matrix(
     teacher_id: uuid.UUID = Depends(get_current_teacher_id),
     db: Session = Depends(get_db)
 ):
-    classroom = db.query(Classroom).filter(
-        Classroom.id == classroom_id,
-        Classroom.owner_teacher_id == teacher_id,
-    ).first()
-    if not classroom:
-        raise HTTPException(status_code=404, detail="Classroom not found")
+    classroom = _owned_classroom(db, classroom_id, teacher_id)
 
     memberships = db.query(ClassroomMembership).filter(
         ClassroomMembership.classroom_id == classroom_id,
@@ -176,51 +192,46 @@ def get_classroom_evidence_matrix(
     for membership in memberships:
         profile = db.query(UserProfile).filter(UserProfile.id == membership.student_id).first()
         summary = summarize_student(db, membership.student_id)
-        checks = summary["checkpointCount"]
-        
-        # Check actual concept mastery snapshots from adaptive engine
-        snapshots = db.query(ConceptMasterySnapshot).filter(
-            ConceptMasterySnapshot.owner_id == membership.student_id
-        ).all()
 
-        band = "sparse"
-        if snapshots:
-            bands = [s.estimate_band for s in snapshots]
-            if "developing" in bands:
-                band = "developing"
-            elif all(b == "demonstrated" for b in bands):
-                band = "demonstrated"
-            elif "approaching" in bands or "demonstrated" in bands:
-                band = "approaching"
-            else:
-                band = "sparse"
-        elif summary["accuracyRate"] is not None and checks >= 1:
-            acc = summary["accuracyRate"]
-            if acc >= 0.85 and checks >= 2:
-                band = "demonstrated"
-            elif acc >= 0.65:
-                band = "approaching"
-            else:
-                band = "developing"
-        elif summary["improvement"] == "improving" and checks >= 2:
-            band = "demonstrated"
-        elif summary["improvement"] == "steady" and checks >= 1:
-            band = "approaching"
-        elif summary["improvement"] == "needs_support":
-            band = "developing"
-
-        demonstrated_count = sum(1 for s in snapshots if s.estimate_band == "demonstrated") if snapshots else (checks if band == "demonstrated" else 0)
+        snapshots = (
+            db.query(ConceptMasterySnapshot)
+            .filter(ConceptMasterySnapshot.owner_id == membership.student_id)
+            .order_by(ConceptMasterySnapshot.calculated_at.desc())
+            .all()
+        )
+        concepts = [
+            {
+                "conceptId": snapshot.concept_id,
+                "band": snapshot.estimate_band,
+                "score": round((snapshot.numeric_estimate or 0.0) * 100, 1),
+                "evidenceCount": snapshot.evidence_count,
+                "calculatedAt": snapshot.calculated_at.isoformat() if snapshot.calculated_at else None,
+            }
+            for snapshot in snapshots
+        ]
+        evidence_band = (
+            "not_enough_evidence"
+            if not concepts
+            else min((item["band"] for item in concepts), key=lambda band: EVIDENCE_RANK.get(band, -1))
+        )
+        concepts_demonstrated = sum(1 for item in concepts if item["band"] == "demonstrated")
+        accuracy_known = summary["accuracyRate"] is not None
 
         matrix.append({
             "studentId": str(membership.student_id),
-            "studentName": profile.display_name if profile else "Student",
-            "conceptsDemonstrated": demonstrated_count,
-            "totalConcepts": len(snapshots) if snapshots else checks,
-            "accuracyRate": summary["accuracyRate"] if summary["accuracyRate"] is not None else 0,
-            "accuracyKnown": summary["accuracyRate"] is not None,
-            "recentAttemptsCount": checks,
-            "evidenceBand": band,
-            "lastActive": next((day["date"] for day in reversed(summary["heatmap"]) if day["seconds"] > 0), ""),
+            "studentName": profile.display_name if profile else "Account removed",
+            "profileMissing": profile is None,
+            "concepts": concepts,
+            "conceptsDemonstrated": concepts_demonstrated,
+            "totalConcepts": len(concepts),
+            "accuracyRate": summary["accuracyRate"] if accuracy_known else 0,
+            "accuracyKnown": accuracy_known,
+            "recentAttemptsCount": summary["checkpointCount"],
+            "evidenceBand": evidence_band,
+            "lastActive": next(
+                (day["date"] for day in reversed(summary["heatmap"]) if day["seconds"] > 0),
+                "",
+            ),
             "minutesStudied": summary["minutesStudied"],
             "readingTitle": summary["readingTitle"],
             "improvement": summary["improvement"],
@@ -229,8 +240,12 @@ def get_classroom_evidence_matrix(
             "focus": summary["focus"],
         })
 
-    # Collect teacher recommendations
-    actions = db.query(TeacherAction).filter(TeacherAction.classroom_id == classroom_id).order_by(TeacherAction.created_at.desc()).all()
+    actions = (
+        db.query(TeacherAction)
+        .filter(TeacherAction.classroom_id == classroom_id)
+        .order_by(TeacherAction.created_at.desc())
+        .all()
+    )
 
     return {
         "classroomId": str(classroom.id),
@@ -246,10 +261,10 @@ def get_classroom_evidence_matrix(
                 "id": str(a.id),
                 "studentId": str(a.student_id),
                 "actionType": a.action_type,
-                "notes": a.reason_json.get("notes") if a.reason_json else "",
-                "conceptId": a.reason_json.get("conceptId") if a.reason_json else "",
+                "notes": (a.reason_json or {}).get("notes") or "",
+                "conceptId": (a.reason_json or {}).get("conceptId") or "",
                 "status": a.status,
-                "createdAt": a.created_at.isoformat()
+                "createdAt": a.created_at.isoformat() if a.created_at else None,
             }
             for a in actions
         ]
@@ -257,49 +272,43 @@ def get_classroom_evidence_matrix(
 
 @router.get("/evidence")
 def get_teacher_evidence(
-    grade: Optional[int] = Query(9),
-    subject: Optional[str] = Query("SCIENCE"),
+    classroom_id: uuid.UUID = Query(..., alias="classroomId"),
     teacher_id: uuid.UUID = Depends(get_current_teacher_id),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
 ):
-    """
-    Returns aggregated concept evidence matrix for the teacher's grade and subject.
-    """
-    # Fetch real concept evidence records
-    evidences = db.query(ConceptEvidence).all()
-    concept_map: Dict[str, Dict[str, Any]] = {}
+    """Concept evidence aggregated only from the members of one owned classroom."""
+    classroom = _owned_classroom(db, classroom_id, teacher_id)
+    member_ids = _active_member_ids(db, classroom.id)
+    if not member_ids:
+        return []
 
-    for ev in evidences:
-        cid = ev.concept_id
-        if cid not in concept_map:
-            concept_map[cid] = {
-                "conceptId": cid,
-                "conceptName": cid.replace("sci-", "").replace("math-", "").replace("-", " ").title(),
+    evidences = (
+        db.query(ConceptEvidence)
+        .filter(ConceptEvidence.owner_id.in_(member_ids))
+        .all()
+    )
+    concept_map: Dict[str, Dict[str, Any]] = {}
+    for evidence in evidences:
+        row = concept_map.setdefault(
+            evidence.concept_id,
+            {
+                "conceptId": evidence.concept_id,
                 "totalAttempts": 0,
                 "correctAttempts": 0,
-                "lastAssessedAt": ev.created_at.strftime("%Y-%m-%d")
-            }
-        concept_map[cid]["totalAttempts"] += 1
-        if ev.outcome == "correct":
-            concept_map[cid]["correctAttempts"] += 1
+                "incorrectAttempts": 0,
+                "lastAssessedAt": None,
+            },
+        )
+        row["totalAttempts"] += 1
+        if evidence.outcome == "correct":
+            row["correctAttempts"] += 1
+        elif evidence.outcome == "incorrect":
+            row["incorrectAttempts"] += 1
+        occurred = evidence.occurred_at.isoformat() if evidence.occurred_at else None
+        if occurred and (row["lastAssessedAt"] is None or occurred > row["lastAssessedAt"]):
+            row["lastAssessedAt"] = occurred
 
-    results = []
-    for cid, data in concept_map.items():
-        tot = data["totalAttempts"]
-        cor = data["correctAttempts"]
-        acc = (cor / tot) if tot > 0 else 0.0
-        band = "demonstrated" if acc >= 0.8 and tot >= 3 else ("approaching" if acc >= 0.6 else "developing" if tot >= 2 else "sparse")
-        results.append({
-            "conceptId": cid,
-            "conceptName": data["conceptName"],
-            "totalAttempts": tot,
-            "correctAttempts": cor,
-            "accuracyRate": round(acc, 2),
-            "masteryBand": band,
-            "lastAssessedAt": data["lastAssessedAt"]
-        })
-
-    return results
+    return [concept_map[concept_id] for concept_id in sorted(concept_map)]
 
 @router.post("/recommendations")
 @router.post("/actions")
@@ -308,13 +317,8 @@ def create_recommendation(
     teacher_id: uuid.UUID = Depends(get_current_teacher_id),
     db: Session = Depends(get_db)
 ):
-    """Creates an actionable pedagogical recommendation from a teacher."""
-    classroom = db.query(Classroom).filter(
-        Classroom.id == req.classroomId,
-        Classroom.owner_teacher_id == teacher_id,
-    ).first()
-    if not classroom:
-        raise HTTPException(status_code=404, detail="Classroom not found")
+    """Creates an explained recommendation backed by a real mastery snapshot."""
+    classroom = _owned_classroom(db, req.classroomId, teacher_id)
     member = db.query(ClassroomMembership).filter(
         ClassroomMembership.classroom_id == classroom.id,
         ClassroomMembership.student_id == req.studentId,
@@ -323,16 +327,51 @@ def create_recommendation(
     if not member:
         raise HTTPException(status_code=404, detail="That student is not in this classroom.")
 
+    snapshot = (
+        db.query(ConceptMasterySnapshot)
+        .filter(
+            ConceptMasterySnapshot.owner_id == req.studentId,
+            ConceptMasterySnapshot.concept_id == req.conceptId,
+        )
+        .order_by(ConceptMasterySnapshot.calculated_at.desc())
+        .first()
+    )
+    if not snapshot:
+        raise HTTPException(
+            status_code=422,
+            detail="No evidence exists for that topic in this classroom yet.",
+        )
+
+    now = datetime.datetime.utcnow()
+    previous = db.query(TeacherAction).filter(
+        TeacherAction.classroom_id == classroom.id,
+        TeacherAction.student_id == req.studentId,
+        TeacherAction.status == "proposed",
+    ).all()
+    for action in previous:
+        reason = dict(action.reason_json or {})
+        if reason.get("conceptId") == req.conceptId:
+            action.status = "superseded"
+            action.resolved_at = now
+
+    reason_json = {
+        "source": "teacher",
+        "conceptId": req.conceptId,
+        "notes": req.notes.strip(),
+        "evidence": {
+            "band": snapshot.estimate_band,
+            "score": round((snapshot.numeric_estimate or 0.0) * 100, 1),
+            "evidenceCount": snapshot.evidence_count,
+            "calculatedAt": snapshot.calculated_at.isoformat() if snapshot.calculated_at else None,
+        },
+    }
     action = TeacherAction(
         teacher_id=teacher_id,
         classroom_id=classroom.id,
         student_id=req.studentId,
         action_type=req.actionType,
-        reason_json={
-            "conceptId": req.conceptId,
-            "notes": req.notes,
-        },
-        status="active"
+        status="proposed",
+        reason_json=reason_json,
     )
     db.add(action)
     db.commit()
@@ -343,5 +382,6 @@ def create_recommendation(
         "status": action.status,
         "actionType": action.action_type,
         "conceptId": req.conceptId,
-        "notes": req.notes
+        "notes": reason_json["notes"],
+        "reason": reason_json,
     }

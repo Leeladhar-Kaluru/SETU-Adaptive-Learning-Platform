@@ -993,6 +993,85 @@
   border-radius: 8px;
   padding: 8px 10px;
   font-size: 14px;
+  line-height: 1.5;
+}
+
+.suggestion {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.suggestionHead {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.suggestionTopic {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--color-warning);
+}
+
+.suggestionExplanation {
+  font-size: 13px;
+  color: var(--ink-secondary);
+}
+
+.suggestionNote {
+  font-size: 14px;
+  color: var(--ink-primary);
+}
+
+.suggestionActions {
+  display: flex;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.suggestionAccept,
+.suggestionDismiss {
+  min-height: 36px;
+  padding: 0 14px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.suggestionAccept {
+  background: var(--brand-primary);
+  color: var(--ink-inverted);
+}
+
+.suggestionAccept:hover:not(:disabled) {
+  background: var(--brand-primary-hover);
+}
+
+.suggestionDismiss {
+  background: var(--bg-surface);
+  border: 1px solid var(--border-medium);
+  color: var(--ink-secondary);
+}
+
+.suggestionDismiss:hover:not(:disabled) {
+  color: var(--ink-primary);
+  border-color: var(--border-strong);
+}
+
+.suggestionAccept:disabled,
+.suggestionDismiss:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.inlineRetry {
+  border-bottom: 1px solid currentColor;
+  font-weight: 700;
+  font-size: inherit;
 }
 
 .ok { color: var(--color-success); font-size: 13px; margin-top: 6px; }

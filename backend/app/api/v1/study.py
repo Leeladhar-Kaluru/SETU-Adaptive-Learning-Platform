@@ -1,8 +1,8 @@
 import datetime
 import uuid
-from typing import Optional
+from typing import Optional, Literal
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
@@ -92,11 +92,39 @@ def summarize_student(db: Session, owner_id: uuid.UUID) -> dict:
 
     suggestions = (
         db.query(TeacherAction)
-        .filter(TeacherAction.student_id == owner_id, TeacherAction.status == "active")
+        .filter(TeacherAction.student_id == owner_id, TeacherAction.status == "proposed")
         .order_by(TeacherAction.created_at.desc())
         .limit(5)
         .all()
     )
+
+    suggestion_rows = []
+    for action in suggestions:
+        reason = action.reason_json or {}
+        evidence = reason.get("evidence") or {}
+        band = evidence.get("band")
+        count = evidence.get("evidenceCount")
+        concept = reason.get("conceptId")
+        if band and concept:
+            explanation = (
+                f"Your teacher noticed {band.replace('_', ' ')} evidence for "
+                f"{str(concept).replace('-', ' ')} ({count} checks)."
+            )
+        else:
+            explanation = "Your teacher sent a note for your next study session."
+        teacher = db.query(UserProfile).filter(UserProfile.id == action.teacher_id).first()
+        suggestion_rows.append(
+            {
+                "id": str(action.id),
+                "note": reason.get("notes") or "",
+                "actionType": action.action_type,
+                "conceptId": concept,
+                "status": action.status,
+                "explanation": explanation,
+                "teacherName": teacher.display_name if teacher else "Your teacher",
+                "createdAt": action.created_at.isoformat() if action.created_at else None,
+            }
+        )
 
     return {
         "minutesStudied": round(total_seconds / 60, 1),
@@ -108,15 +136,7 @@ def summarize_student(db: Session, owner_id: uuid.UUID) -> dict:
         "dailyGoalMinutes": pace_minutes,
         "focus": focus,
         "heatmap": heatmap,
-        "suggestions": [
-            {
-                "id": str(action.id),
-                "note": (action.reason_json or {}).get("notes") or "",
-                "actionType": action.action_type,
-                "createdAt": action.created_at.isoformat() if action.created_at else None,
-            }
-            for action in suggestions
-        ],
+        "suggestions": suggestion_rows,
     }
 
 
@@ -146,3 +166,35 @@ def study_summary(
     db: Session = Depends(get_db),
 ):
     return summarize_student(db, owner_id)
+
+
+class RecommendationDecision(BaseModel):
+    decision: Literal["accept", "dismiss"]
+    note: Optional[str] = Field(default=None, max_length=500)
+
+
+@router.post("/recommendations/{action_id}/respond")
+def respond_to_recommendation(
+    action_id: uuid.UUID,
+    req: RecommendationDecision,
+    owner_id: uuid.UUID = Depends(get_current_user_id),
+    db: Session = Depends(get_db),
+):
+    action = db.query(TeacherAction).filter(
+        TeacherAction.id == action_id,
+        TeacherAction.student_id == owner_id,
+        TeacherAction.status == "proposed",
+    ).first()
+    if not action:
+        raise HTTPException(status_code=404, detail="Recommendation not found.")
+    action.status = "accepted" if req.decision == "accept" else "dismissed"
+    action.resolved_at = datetime.datetime.utcnow()
+    reason = dict(action.reason_json or {})
+    reason["studentResponse"] = {
+        "decision": req.decision,
+        "note": (req.note or "").strip()[:500],
+        "respondedAt": action.resolved_at.isoformat(),
+    }
+    action.reason_json = reason
+    db.commit()
+    return {"id": str(action.id), "status": action.status}
