@@ -272,7 +272,7 @@ export const DoubtQueuePage: React.FC = () => {
                   <p className={styles.answerText}>{row.answer}</p>
                   {row.limitations === 'insufficient_source_evidence' && (
                     <p className={styles.limitation}>
-                      Your uploaded source did not contain enough verified evidence for a grounded
+                      Your uploaded source did not contain enough evidence for a grounded
                       answer.
                     </p>
                   )}

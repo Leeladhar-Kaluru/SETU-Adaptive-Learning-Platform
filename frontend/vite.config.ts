@@ -11,7 +11,7 @@ export default defineConfig({
       manifest: {
         name: 'SETU',
         short_name: 'SETU',
-        description: 'Purposeful, Source-First Adaptive Learning Desk for Classes 6-10',
+        description: 'Source-grounded adaptive learning desk for Classes 6-10',
         theme_color: '#15233B',
         background_color: '#F7F6F1',
         display: 'standalone',
@@ -42,5 +42,15 @@ export default defineConfig({
         changeOrigin: true
       }
     }
+  },
+  preview: {
+    port: 5173,
+    proxy: {
+      '/api': {
+        target: 'http://localhost:8000',
+        changeOrigin: true
+      }
+    }
   }
 });
+

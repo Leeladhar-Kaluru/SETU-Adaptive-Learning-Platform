@@ -22,6 +22,7 @@ export const LessonReaderPage: React.FC = () => {
   const [readyMessage, setReadyMessage] = useState('This lesson is still being prepared from your document.');
   const [isSavedOffline, setIsSavedOffline] = useState(false);
   const [savingOffline, setSavingOffline] = useState(false);
+  const [saveOfflineError, setSaveOfflineError] = useState<string | null>(null);
 
   // Provenance Drawer State
   const [activeCitation, setActiveCitation] = useState<any | null>(null);
@@ -132,11 +133,12 @@ export const LessonReaderPage: React.FC = () => {
   const handleSaveOffline = async () => {
     if (!lessonPackage || !user) return;
     setSavingOffline(true);
+    setSaveOfflineError(null);
     try {
       await saveLessonOffline(lessonPackage, user.id);
       setIsSavedOffline(true);
-    } catch (err) {
-      console.error('Failed to save offline:', err);
+    } catch {
+      setSaveOfflineError('Could not save this lesson on this device. Check browser storage and try again.');
     } finally {
       setSavingOffline(false);
     }
@@ -463,6 +465,11 @@ export const LessonReaderPage: React.FC = () => {
             <HelpCircle size={14} /> Ask Doubt
           </button>
         </div>
+        {saveOfflineError && (
+          <p role="alert" style={{ marginTop: 8, fontSize: 13, color: 'var(--color-error)' }}>
+            {saveOfflineError}
+          </p>
+        )}
       </div>
 
       {/* Learn / Solve / Test Tab Navigation */}
@@ -518,7 +525,7 @@ export const LessonReaderPage: React.FC = () => {
                     key={rIdx}
                     className={styles.citationBadge}
                     onClick={() => setActiveCitation(ref)}
-                    title={`Click to view textbook evidence (Page ${ref.pageStart})`}
+                    title={`Click to view source evidence (Page ${ref.pageStart})`}
                   >
                     <FileSearch size={11} /> Page {ref.pageStart}
                   </span>
@@ -788,10 +795,10 @@ export const LessonReaderPage: React.FC = () => {
             </div>
             <div>
               <div style={{ fontSize: '12px', fontWeight: 700, color: '#4055D9', textTransform: 'uppercase' }}>
-                Verified Textbook Citation
+                Source citation
               </div>
               <h4 style={{ fontSize: '16px', fontWeight: 700, marginTop: '4px', color: '#15233B' }}>
-                {activeCitation.sourceTitle || 'Class 9 Textbook'}
+                {activeCitation.sourceTitle || 'Uploaded source'}
               </h4>
               <div style={{ fontSize: '13px', color: '#7E8B9F', marginTop: '2px' }}>
                 Page {activeCitation.pageStart}
@@ -799,11 +806,11 @@ export const LessonReaderPage: React.FC = () => {
             </div>
 
             <div style={{ padding: '16px', background: '#FAFAF8', borderRadius: '8px', border: '1px solid #D9DEEA', fontSize: '14px', lineHeight: 1.6, color: '#15233B' }}>
-              {activeCitation.excerpt || activeCitation.text || 'Source excerpt verified from the uploaded document.'}
+              {activeCitation.excerpt || activeCitation.text || 'Excerpt from the document you uploaded.'}
             </div>
 
             <div style={{ fontSize: '12px', color: '#4A5873' }}>
-              ✓ Extracted from original verified syllabus document with sha256 checksum integrity.
+              ✓ Extracted from the document you uploaded.
             </div>
           </div>
         </div>
@@ -821,7 +828,7 @@ export const LessonReaderPage: React.FC = () => {
             </div>
 
             <p style={{ fontSize: '13px', color: '#4A5873' }}>
-              Ask any question about this lesson. Your answer is grounded strictly in your verified textbook source{doubtPage ? ` (Page ${doubtPage})` : ''}.
+              Ask any question about this lesson. Your answer is grounded in the document you uploaded{doubtPage ? ` (Page ${doubtPage})` : ''}.
             </p>
 
             <textarea
@@ -859,7 +866,7 @@ export const LessonReaderPage: React.FC = () => {
                 </div>
                 {doubtResponse.limitations === 'insufficient_source_evidence' && (
                   <div style={{ marginTop: '6px', fontSize: '12px', color: '#A65B12' }}>
-                    The uploaded source does not contain enough evidence for a verified answer.
+                    The uploaded source does not contain enough evidence for a grounded answer.
                   </div>
                 )}
                 {doubtResponse.retryable && (

@@ -68,7 +68,9 @@ export const Navigation: React.FC = () => {
         </NavLink>
 
         <nav className={styles.navLinks} aria-label="Primary">
-          {user?.role === 'teacher' ? (
+          {!user ? (
+            <NavLink to="/" end className={linkClass}>Home</NavLink>
+          ) : user.role === 'teacher' ? (
             <NavLink to="/teacher" className={linkClass}>Classroom</NavLink>
           ) : (
             <>
@@ -84,7 +86,14 @@ export const Navigation: React.FC = () => {
         </nav>
 
         <div className={styles.sidebarFoot}>
-          <div className={`${styles.badge} ${isOnline ? styles.badgeOnline : styles.badgeOffline}`}>
+          <div
+            className={`${styles.badge} ${isOnline ? styles.badgeOnline : styles.badgeOffline}`}
+            title={
+              isOnline
+                ? 'Connected'
+                : 'Offline. Work is saved on this device and syncs when you reconnect.'
+            }
+          >
             <span className={styles.dot} />
             {isOnline ? 'Online' : 'Offline'}
           </div>
@@ -94,7 +103,7 @@ export const Navigation: React.FC = () => {
             </button>
           )}
           <button type="button" className={styles.tourTriggerButton} onClick={openTour}>
-            Get Started
+            {user ? 'How SETU works' : 'Get started'}
           </button>
           {user ? (
             <div className={styles.userBlock}>

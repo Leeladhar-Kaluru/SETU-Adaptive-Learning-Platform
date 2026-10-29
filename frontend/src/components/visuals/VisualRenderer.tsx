@@ -4,6 +4,7 @@ import { FractionModel } from './FractionModel';
 import { ConceptMap } from './ConceptMap';
 import { CoordinateGrid } from './CoordinateGrid';
 import { CellMembrane } from './CellMembrane';
+import { ProcessDiagram } from './ProcessDiagram';
 
 interface VisualRendererProps {
   visual: {
@@ -58,33 +59,22 @@ export const VisualRenderer: React.FC<VisualRendererProps> = ({ visual }) => {
         />
       );
     case 'cell_membrane':
-    case 'science_process':
       return (
         <CellMembrane
           altText={altText}
           labels={data.labels}
         />
       );
-    default:
-      // Fallback clean structured diagram card
-      return (
-        <div style={{
-          padding: '16px',
-          margin: '12px 0',
-          background: '#FAFAF8',
-          border: '1px solid #D9DEEA',
-          borderRadius: '8px',
-          textAlign: 'center'
-        }}>
-          <div style={{ fontWeight: 600, fontSize: '13px', color: '#15233B' }}>
-            📊 {altText || 'Pedagogical Concept Visual'}
-          </div>
-          {spec && (
-            <div style={{ marginTop: '6px', fontSize: '11px', color: '#7E8B9F', fontFamily: 'monospace' }}>
-              Type: {type}
-            </div>
-          )}
-        </div>
+    case 'science_process': {
+      const steps = Array.isArray(data.steps) ? data.steps : [];
+      return steps.length > 0 ? (
+        <ProcessDiagram title={data.title} steps={steps} altText={altText} />
+      ) : (
+        <p>This process visual is not available for this lesson.</p>
       );
+    }
+    default:
+      return <p>{altText || 'This visual is not available for this lesson.'}</p>;
   }
 };
+

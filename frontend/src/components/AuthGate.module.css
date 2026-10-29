@@ -1,0 +1,41 @@
+.loading {
+  padding: 32px;
+  color: var(--ink-secondary);
+}
+
+.page {
+  max-width: 720px;
+  margin: 48px auto;
+  padding: 0 24px;
+}
+
+.page h1 {
+  font-size: 28px;
+  margin-bottom: 8px;
+  color: var(--ink-primary);
+}
+
+.lede {
+  color: var(--ink-secondary);
+  line-height: 1.6;
+  margin-bottom: 20px;
+}
+
+.primary {
+  min-height: 44px;
+  padding: 0 18px;
+  border-radius: var(--radius-md);
+  background: var(--brand-primary);
+  color: var(--ink-inverted);
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.primary:hover {
+  background: var(--brand-primary-hover);
+}
+
+.primary:focus-visible {
+  outline: 2px solid var(--brand-primary);
+  outline-offset: 3px;
+}

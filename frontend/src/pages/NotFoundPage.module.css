@@ -1,0 +1,48 @@
+.page {
+  max-width: 620px;
+  margin: 72px auto;
+  padding: 0 24px;
+}
+
+.eyebrow {
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--brand-primary);
+  margin-bottom: 8px;
+}
+
+.page h1 {
+  font-size: clamp(30px, 5vw, 42px);
+  letter-spacing: -0.03em;
+  color: var(--ink-primary);
+}
+
+.lede {
+  margin-top: 12px;
+  color: var(--ink-secondary);
+  font-size: 16px;
+  line-height: 1.6;
+}
+
+.link {
+  display: inline-flex;
+  align-items: center;
+  margin-top: 24px;
+  padding: 10px 16px;
+  border-radius: var(--radius-md);
+  background: var(--brand-primary);
+  color: var(--ink-inverted);
+  font-weight: 700;
+  font-size: 14px;
+}
+
+.link:hover {
+  background: var(--brand-primary-hover);
+}
+
+.link:focus-visible {
+  outline: 2px solid var(--brand-primary);
+  outline-offset: 3px;
+}

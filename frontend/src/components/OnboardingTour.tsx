@@ -225,7 +225,7 @@ export const OnboardingTour: React.FC<OnboardingTourProps> = ({ isOpen, onClose 
                 Welcome to SETU
               </h2>
               <p className={styles.subtitle}>
-                The purpose-built, source-grounded adaptive learning desk for Classes 6 to 10. Learn concepts directly from verified textbooks, ask doubts with exact page citations, and study offline anytime.
+                The purpose-built, source-grounded adaptive learning desk for Classes 6 to 10. Learn concepts directly from the sources you add, ask doubts with page citations, and study offline anytime.
               </p>
               <div className={styles.featureList}>
                 <div className={styles.featureCard}>
@@ -233,7 +233,7 @@ export const OnboardingTour: React.FC<OnboardingTourProps> = ({ isOpen, onClose 
                   <div>
                     <div className={styles.featureTitle}>Source-Grounded Learning</div>
                     <div className={styles.featureText}>
-                      Every explanation, hint, and quiz question is derived from real NCERT/CBSE textbooks and uploaded school materials. No hallucinated facts.
+                      Every explanation and citation is checked against the document you upload. If the source does not contain enough evidence, SETU says so instead of inventing an answer.
                     </div>
                   </div>
                 </div>
@@ -242,7 +242,7 @@ export const OnboardingTour: React.FC<OnboardingTourProps> = ({ isOpen, onClose 
                   <div>
                     <div className={styles.featureTitle}>Learn · Solve · Test Flow</div>
                     <div className={styles.featureText}>
-                      Step through verified concepts, practice with progressive hints, and prove genuine mastery through checkpoint tests.
+                      Step through source-grounded concepts, practice with progressive hints, and prove genuine mastery through checkpoint tests.
                     </div>
                   </div>
                 </div>

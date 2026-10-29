@@ -20,6 +20,8 @@ export const HomePage: React.FC = () => {
   const [respondingSuggestionId, setRespondingSuggestionId] = useState<string | null>(null);
   const [suggestionErrors, setSuggestionErrors] = useState<Record<string, string>>({});
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
+  const [downloadingLessonId, setDownloadingLessonId] = useState<string | null>(null);
+  const [downloadNotice, setDownloadNotice] = useState<{ kind: 'ok' | 'error'; message: string } | null>(null);
 
   // Classroom Join State
   const [joinCode, setJoinCode] = useState('');
@@ -350,8 +352,20 @@ export const HomePage: React.FC = () => {
 
   const downloadLesson = async (lessonId: string) => {
     if (!user) return;
-    const pkg = await api.getLesson(lessonId);
-    await saveLessonOffline(pkg, user.id);
+    setDownloadingLessonId(lessonId);
+    setDownloadNotice(null);
+    try {
+      const pkg = await api.getLesson(lessonId);
+      await saveLessonOffline(pkg, user.id);
+      setDownloadNotice({ kind: 'ok', message: 'Saved for offline reading.' });
+    } catch {
+      setDownloadNotice({
+        kind: 'error',
+        message: 'Could not save this lesson. Try again when you are online.',
+      });
+    } finally {
+      setDownloadingLessonId(null);
+    }
   };
 
   const subjectLabel = (value: string) => {
@@ -366,7 +380,7 @@ export const HomePage: React.FC = () => {
           <span className={styles.welcomeBadge}>Adaptive Learning Desk · Classes 6–10</span>
           <h1 className={styles.welcomeTitle}>Welcome to SETU</h1>
           <p className={styles.welcomeSubtitle}>
-            A purpose-built, source-grounded learning desk for Indian school students. Learn directly from verified textbooks, practice with progressive hints, and test real mastery — online or offline.
+            A purpose-built, source-grounded learning desk for Indian school students. Learn directly from the sources you add, practice with progressive hints, and test real mastery — online or offline.
           </p>
           <div className={styles.welcomeActions}>
             <button
@@ -391,7 +405,7 @@ export const HomePage: React.FC = () => {
             <span className={styles.welcomeCardIcon}>📖</span>
             <h3 className={styles.welcomeCardTitle}>Source-Grounded Curriculum</h3>
             <p className={styles.welcomeCardDesc}>
-              Upload textbooks up to 50MB and 300–500 pages. Every lesson concept, hint, and quiz question references exact textbook pages with full OCR and zero hallucinations.
+              Upload textbooks up to 50MB and 300–500 pages. Lessons, hints, and quiz questions cite the pages of the document you upload. If the source does not contain enough evidence, SETU says so instead of inventing an answer.
             </p>
           </article>
 
@@ -498,23 +512,24 @@ export const HomePage: React.FC = () => {
                 <li
                   key={lesson.id}
                   className={lesson.status === 'ready' ? styles.unitReady : styles.unitWait}
-                  onClick={() => {
-                    if (lesson.status === 'ready') {
-                      navigate(`/lesson/${lesson.id}?pathId=${plan.id}`);
-                    }
-                  }}
-                  style={{ cursor: lesson.status === 'ready' ? 'pointer' : 'default' }}
                 >
-                  <span>{lesson.sequence}. {lesson.title}</span>
-                  <small>
-                    {lesson.status === 'ready'
-                      ? 'Open →'
-                      : lesson.status === 'failed'
-                        ? 'Could not prepare'
-                        : lesson.sequence <= 2
-                          ? 'Preparing'
-                          : 'Queued'}
-                  </small>
+                  <button
+                    type="button"
+                    className={styles.unitButton}
+                    disabled={lesson.status !== 'ready'}
+                    onClick={() => navigate(`/lesson/${lesson.id}?pathId=${plan.id}`)}
+                  >
+                    <span>{lesson.sequence}. {lesson.title}</span>
+                    <small>
+                      {lesson.status === 'ready'
+                        ? 'Open →'
+                        : lesson.status === 'failed'
+                          ? 'Could not prepare'
+                          : lesson.sequence <= 2
+                            ? 'Preparing'
+                            : 'Queued'}
+                    </small>
+                  </button>
                 </li>
               ))}
             </ol>
@@ -534,11 +549,26 @@ export const HomePage: React.FC = () => {
             </div>
             <div className={styles.rowActions}>
               <button type="button" className={styles.primary} onClick={() => navigate(`/lesson/${readyLesson.id}?pathId=${plan.id}`)}>Read</button>
-              <button type="button" className={styles.secondary} onClick={() => downloadLesson(readyLesson.id)}>Download</button>
+              <button
+                type="button"
+                className={styles.secondary}
+                onClick={() => void downloadLesson(readyLesson.id)}
+                disabled={downloadingLessonId === readyLesson.id}
+              >
+                {downloadingLessonId === readyLesson.id ? 'Saving…' : 'Download'}
+              </button>
             </div>
           </div>
         ) : (
           <p className={styles.meta}>The first units are not ready yet.</p>
+        )}
+        {downloadNotice && (
+          <p
+            className={downloadNotice.kind === 'ok' ? styles.ok : styles.bad}
+            role={downloadNotice.kind === 'error' ? 'alert' : 'status'}
+          >
+            {downloadNotice.message}
+          </p>
         )}
       </section>
 

@@ -6,7 +6,7 @@ from app.api.api import api_router
 app = FastAPI(
     title="SETU",
     description="Adaptive Learning Desk for Classes 6-10",
-    version="2.0.0"
+    version="1.0.0"
 )
 
 # CORS Middleware
@@ -28,3 +28,4 @@ def root():
         "docsUrl": "/docs",
         "healthUrl": f"{settings.API_V1_PREFIX}/health"
     }
+
