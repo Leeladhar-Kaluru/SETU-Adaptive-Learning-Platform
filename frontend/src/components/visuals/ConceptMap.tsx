@@ -1,4 +1,5 @@
 import React from 'react';
+import { VisualUnavailable } from './VisualUnavailable';
 
 interface Node {
   id: string;
@@ -11,27 +12,27 @@ interface ConceptMapProps {
   altText?: string;
 }
 
+const hasUsableNodes = (nodes?: Node[]): nodes is Node[] =>
+  Array.isArray(nodes) &&
+  nodes.length > 0 &&
+  nodes.every((node) => node && typeof node.id === 'string' && typeof node.label === 'string' && node.label.trim().length > 0);
+
 export const ConceptMap: React.FC<ConceptMapProps> = ({
-  nodes = [
-    { id: 'c1', label: 'Cell Structure' },
-    { id: 'c2', label: 'Plasma Membrane' },
-    { id: 'c3', label: 'Selective Permeability' },
-    { id: 'c4', label: 'Diffusion & Osmosis' }
-  ],
-  edges = [
-    ['c1', 'c2'],
-    ['c2', 'c3'],
-    ['c2', 'c4']
-  ],
-  altText = 'Concept Relationship Map'
+  nodes,
+  edges = [],
+  altText,
 }) => {
+  if (!altText || !hasUsableNodes(nodes)) {
+    return <VisualUnavailable reason="This concept map has no concepts in the lesson source." />;
+  }
+
   const width = 600;
   const height = 220;
 
   // Compute simple positions for up to 6 nodes
   const nodeCoords: Record<string, { x: number; y: number }> = {};
   if (nodes.length <= 4) {
-    nodeCoords[nodes[0]?.id || 'c1'] = { x: 300, y: 40 };
+    nodeCoords[nodes[0].id] = { x: 300, y: 40 };
     if (nodes[1]) nodeCoords[nodes[1].id] = { x: 300, y: 110 };
     if (nodes[2]) nodeCoords[nodes[2].id] = { x: 160, y: 180 };
     if (nodes[3]) nodeCoords[nodes[3].id] = { x: 440, y: 180 };

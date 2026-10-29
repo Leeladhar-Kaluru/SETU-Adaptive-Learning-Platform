@@ -1,24 +1,33 @@
 import React from 'react';
+import { VisualUnavailable } from './VisualUnavailable';
+
+interface CellMembraneLabels {
+  outer?: string;
+  bilayer?: string;
+  channel?: string;
+  inner?: string;
+  transport?: string;
+}
 
 interface CellMembraneProps {
   altText?: string;
-  labels?: {
-    outer?: string;
-    bilayer?: string;
-    channel?: string;
-    inner?: string;
-  };
+  labels?: CellMembraneLabels;
 }
 
-export const CellMembrane: React.FC<CellMembraneProps> = ({
-  altText = 'Fluid Mosaic Model: Plasma Membrane Bilayer with Channel Protein',
-  labels = {
-    outer: 'Extracellular Fluid (Outside)',
-    bilayer: 'Phospholipid Bilayer (Hydrophilic heads & Hydrophobic tails)',
-    channel: 'Transport / Carrier Protein',
-    inner: 'Cytoplasm (Inside Cell)'
+const hasUsableLabels = (labels?: CellMembraneLabels): labels is Required<Pick<CellMembraneLabels, 'outer' | 'inner'>> & CellMembraneLabels =>
+  Boolean(
+    labels &&
+      labels.outer &&
+      labels.outer.trim() &&
+      labels.inner &&
+      labels.inner.trim()
+  );
+
+export const CellMembrane: React.FC<CellMembraneProps> = ({ altText, labels }) => {
+  if (!altText || !hasUsableLabels(labels)) {
+    return <VisualUnavailable reason="This labelled diagram has no labels in the lesson source." />;
   }
-}) => {
+
   const width = 600;
   const height = 240;
 
@@ -81,20 +90,29 @@ export const CellMembrane: React.FC<CellMembraneProps> = ({
           />
           {/* Pore opening */}
           <line x1="0" y1="-45" x2="0" y2="45" stroke="#FFFFFF" strokeWidth="2" strokeDasharray="3 3" />
-          {/* Label */}
-          <text x="0" y="4" fill="#FFFFFF" fontSize="10" fontWeight="700" textAnchor="middle" fontFamily="sans-serif">
-            PORE
-          </text>
+          {labels.channel && (
+            <text x="0" y="4" fill="#FFFFFF" fontSize="10" fontWeight="700" textAnchor="middle" fontFamily="sans-serif">
+              {labels.channel}
+            </text>
+          )}
         </g>
 
-        {/* Arrow showing selective diffusion */}
-        <g transform="translate(300, 50)">
-          <line x1="0" y1="-10" x2="0" y2="135" stroke="#A65B12" strokeWidth="2" strokeDasharray="4 2" />
-          <polygon points="0,140 -5,130 5,130" fill="#A65B12" />
-          <text x="50" y="70" fill="#A65B12" fontSize="11" fontWeight="600" textAnchor="start" fontFamily="sans-serif">
-            Selective Molecules (Diffusion)
+        {labels.bilayer && (
+          <text x="300" y="120" fill="#15233B" fontSize="11" fontWeight="600" textAnchor="middle" fontFamily="sans-serif">
+            {labels.bilayer}
           </text>
-        </g>
+        )}
+
+        {/* Arrow showing transport, only when the source names it */}
+        {labels.transport && (
+          <g transform="translate(300, 50)">
+            <line x1="0" y1="-10" x2="0" y2="135" stroke="#A65B12" strokeWidth="2" strokeDasharray="4 2" />
+            <polygon points="0,140 -5,130 5,130" fill="#A65B12" />
+            <text x="50" y="70" fill="#A65B12" fontSize="11" fontWeight="600" textAnchor="start" fontFamily="sans-serif">
+              {labels.transport}
+            </text>
+          </g>
+        )}
       </svg>
       <div style={{ fontSize: '12px', color: '#7E8B9F', marginTop: '6px' }}>{altText}</div>
     </div>

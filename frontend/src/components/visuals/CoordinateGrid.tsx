@@ -1,4 +1,5 @@
 import React from 'react';
+import { VisualUnavailable } from './VisualUnavailable';
 
 interface Point {
   x: number;
@@ -13,12 +14,23 @@ interface CoordinateGridProps {
   altText?: string;
 }
 
+const isRange = (value?: [number, number]): value is [number, number] =>
+  Array.isArray(value) &&
+  value.length === 2 &&
+  Number.isFinite(value[0]) &&
+  Number.isFinite(value[1]) &&
+  value[1] > value[0];
+
 export const CoordinateGrid: React.FC<CoordinateGridProps> = ({
-  xRange = [-5, 5],
-  yRange = [-5, 5],
-  points = [{ x: 2, y: 3, label: 'P(2,3)' }, { x: -3, y: 1, label: 'Q(-3,1)' }],
-  altText = 'Cartesian Coordinate Plane'
+  xRange,
+  yRange,
+  points = [],
+  altText,
 }) => {
+  if (!altText || !isRange(xRange) || !isRange(yRange)) {
+    return <VisualUnavailable reason="This coordinate grid has no usable axes in the lesson source." />;
+  }
+
   const size = 320;
   const padding = 30;
   const innerSize = size - padding * 2;

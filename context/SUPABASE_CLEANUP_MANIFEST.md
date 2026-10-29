@@ -4,9 +4,10 @@
 **Target Supabase Project:** https://mevbffduofdpalzimfye.supabase.co
 **Storage Bucket:** setu-documents
 
-> **Current state (2026-10-28):** Sections 1–5 are the historical reset record.
-> The database was repopulated by later test/demo activity. See Section 6 for the
-> current read-only inventory and the still-open human confirmation gate.
+> **Current state (2026-10-29):** Sections 1–5 are the historical full-reset record.
+> Section 6 is the pre-cleanup inventory. Section 7 is the final read-only
+> inventory after the approved scoped cleanup and Task 17 verification. No broad
+> reset and no emergency `--apply` reset was run.
 
 ---
 
@@ -140,3 +141,73 @@ python backend/scripts/cleanup_demo_data.py --apply --confirm APPLY-CLEANUP \
 
 The report from the inventory run is at `context/CLEANUP_REPORT.md`. That file
 records the same counts and masked emails and states that the gate is open.
+
+---
+
+## 7. Final inventory after scoped cleanup (2026-10-29)
+
+**Command:** `.\backend\.venv\Scripts\python.exe backend\scripts\reset_supabase_app_data.py`
+**Mode:** read-only inventory. The script printed `Read-only inventory. No changes were made.`
+**Emergency reset `--apply`:** NOT RUN.
+**Scoped cleanup:** applied earlier under Task 2 with explicit profile IDs. Eight
+`example.com` profiles and the 26 seeded `resources` / `resource_rights` rows were
+deleted. The real Gmail profile (`5cee4e2f-bbdc-41f5-87c9-52cdc63e755b`) was
+preserved.
+
+### 7.1 Observed row counts
+
+| Table | Rows |
+|---|---:|
+| `alembic_version` | 1 |
+| `user_profiles` | 1 |
+| `documents` | 13 |
+| `document_pages` | 628 |
+| `document_chunks` | 1086 |
+| `learning_paths` | 1 |
+| `path_lessons` | 24 |
+| `lesson_versions` | 17 |
+| `questions` | 0 |
+| `quiz_attempts` | 0 |
+| `concept_evidence` | 0 |
+| `concept_mastery_snapshots` | 0 |
+| `doubts` | 15 |
+| `sync_events` | 0 |
+| `classrooms` | 8 |
+| `classroom_memberships` | 8 |
+| `teacher_actions` | 0 |
+| `study_events` | 6 |
+| `generation_jobs` | 24 |
+| `resources` | 0 |
+| `resource_rights` | 0 |
+| `resource_sources` | 0 |
+| `curriculum_boards` | 6 |
+| `subjects` | 6 |
+| `languages` | 4 |
+| `storage.objects` (`setu-documents`) | 8 |
+| `auth.users` | 9 |
+
+### 7.2 Confirmation state
+
+- The scoped cleanup confirmation gate is **closed** for the eight
+  `example.com` profiles and the seeded resources; those rows are gone.
+- The emergency reset gate remains **closed**. No command with
+  `--confirm DROP-ALL-APPLICATION-TABLES` was executed.
+- A new decision is **open**: `auth.users` still has 9 rows while
+  `user_profiles` has 1. Eight auth users are therefore orphans from the scoped
+  profile deletion. They were intentionally not deleted without explicit human
+  authorization and a verified backup.
+- `storage.objects` has 8 objects for 13 documents. This is the observed value.
+  Do not infer missing objects from the document count without checking storage
+  keys per document.
+- The preserved Gmail profile has role `student` and owns 8 classrooms. Teacher
+  endpoints return 403 for that account until its role is corrected or a real
+  teacher account is used. No role was changed during this verification.
+
+### 7.3 Safety notes
+
+- The inventory run did not print the database URL, password, service key, or
+  full email addresses. The target was shown as a masked pooler host.
+- No application table, storage object, profile, or auth user was changed by the
+  Task 17 inventory.
+- The timestamped reset-report mechanism is covered by
+  `backend/tests/test_reset_guard.py`; no report is produced by a read-only run.

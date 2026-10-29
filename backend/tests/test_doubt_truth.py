@@ -69,7 +69,7 @@ async def test_insufficient_evidence_is_answered_without_citations(db, monkeypat
     assert result["status"] == "answered"
     assert result["answerJson"]["citations"] == []
     assert result["answerJson"]["limitations"] == "insufficient_source_evidence"
-    assert "does not contain sufficient verified evidence" in result["answerJson"]["answer"]
+    assert "does not contain enough evidence" in result["answerJson"]["answer"]
 
 
 def test_blank_question_is_rejected(client):

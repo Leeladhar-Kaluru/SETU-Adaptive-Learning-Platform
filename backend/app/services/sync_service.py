@@ -84,7 +84,7 @@ class SyncService:
 
             if retrieval.get("insufficient_evidence") or not results:
                 answer_payload = {
-                    "answer": "The selected document does not contain sufficient verified evidence to answer this question accurately. Please review the relevant textbook chapter or consult your teacher.",
+                    "answer": "The selected document does not contain enough evidence to answer this question accurately. Please review the relevant part of your source or consult your teacher.",
                     "citations": [],
                     "limitations": "insufficient_source_evidence",
                     "answeredAt": datetime.datetime.utcnow().isoformat()
@@ -92,10 +92,10 @@ class SyncService:
             else:
                 prompt = (
                     f"You are SETU Academic Tutor.\n"
-                    f"Answer the student's doubt strictly using only the provided textbook evidence.\n"
+                    f"Answer the student's doubt using only the source evidence provided below.\n"
                     f"Student Question: {question_text}\n"
-                    f"Verified Textbook Evidence:\n{evidence_str}\n\n"
-                    f"Provide a clear, age-appropriate, encouraging explanation referencing the exact textbook concepts."
+                    f"Source Evidence from the Uploaded Document:\n{evidence_str}\n\n"
+                    f"Provide a clear, age-appropriate, encouraging explanation that references the exact concepts and page positions in the source."
                 )
                 llm_answer = await ai_provider.generate_chat(
                     messages=[{"role": "user", "content": prompt}],
