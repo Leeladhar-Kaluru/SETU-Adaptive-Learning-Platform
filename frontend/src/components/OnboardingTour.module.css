@@ -1,0 +1,326 @@
+.backdrop {
+  position: fixed;
+  inset: 0;
+  background-color: rgba(21, 35, 59, 0.65);
+  backdrop-filter: blur(4px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  padding: 1.5rem;
+}
+
+.modal {
+  background-color: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  max-width: 640px;
+  width: 100%;
+  box-shadow: var(--shadow-lg);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  animation: fadeInScale 200ms ease-out;
+}
+
+@keyframes fadeInScale {
+  from {
+    opacity: 0;
+    transform: scale(0.97);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+.header {
+  padding: 1.5rem 1.5rem 1rem 1.5rem;
+  border-bottom: 1px solid var(--border-subtle);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.brandBadge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.8125rem;
+  font-weight: 700;
+  color: var(--brand-primary);
+  background-color: var(--brand-subtle);
+  padding: 0.25rem 0.625rem;
+  border-radius: var(--radius-full);
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.closeButton {
+  font-size: 1.25rem;
+  color: var(--ink-secondary);
+  border-radius: var(--radius-xs);
+  padding: 0.25rem 0.5rem;
+  transition: all var(--transition-fast);
+}
+
+.closeButton:hover {
+  background-color: var(--bg-subtle);
+  color: var(--ink-primary);
+}
+
+.body {
+  padding: 1.5rem;
+  max-height: 70vh;
+  overflow-y: auto;
+}
+
+.title {
+  font-size: 1.375rem;
+  font-weight: 700;
+  color: var(--ink-primary);
+  margin-bottom: 0.5rem;
+}
+
+.subtitle {
+  font-size: 0.9375rem;
+  color: var(--ink-secondary);
+  line-height: 1.5;
+  margin-bottom: 1.5rem;
+}
+
+.stepIndicator {
+  display: flex;
+  gap: 0.5rem;
+  margin-bottom: 1.5rem;
+}
+
+.stepBar {
+  flex: 1;
+  height: 4px;
+  border-radius: 2px;
+  background-color: var(--border-subtle);
+  transition: background-color var(--transition-normal);
+}
+
+.stepBarActive {
+  background-color: var(--brand-primary);
+}
+
+.formGrid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1rem;
+}
+
+@media (max-width: 600px) {
+  .formGrid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.fieldGroup {
+  display: flex;
+  flex-direction: column;
+  gap: 0.375rem;
+  margin-bottom: 1rem;
+}
+
+.label {
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: var(--ink-primary);
+}
+
+.select, .input {
+  padding: 0.625rem 0.75rem;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background-color: var(--bg-surface);
+  color: var(--ink-primary);
+  font-size: 0.875rem;
+  transition: border-color var(--transition-fast);
+}
+
+.select:focus, .input:focus {
+  outline: none;
+  border-color: var(--brand-primary);
+  box-shadow: 0 0 0 2px var(--brand-subtle);
+}
+
+.chipGroup {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.chip {
+  padding: 0.375rem 0.75rem;
+  font-size: 0.8125rem;
+  font-weight: 500;
+  border-radius: var(--radius-full);
+  border: 1px solid var(--border-subtle);
+  background-color: var(--bg-surface);
+  color: var(--ink-secondary);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.chip:hover {
+  border-color: var(--brand-primary);
+  color: var(--brand-primary);
+}
+
+.chipSelected {
+  background-color: var(--brand-primary);
+  color: #ffffff;
+  border-color: var(--brand-primary);
+}
+
+.featureList {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.featureCard {
+  display: flex;
+  gap: 1rem;
+  padding: 1rem;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background-color: var(--bg-surface-hover);
+}
+
+.featureIcon {
+  font-size: 1.5rem;
+  flex-shrink: 0;
+}
+
+.featureTitle {
+  font-size: 0.9375rem;
+  font-weight: 600;
+  color: var(--ink-primary);
+  margin-bottom: 0.25rem;
+}
+
+.featureText {
+  font-size: 0.8125rem;
+  color: var(--ink-secondary);
+  line-height: 1.4;
+}
+
+.footer {
+  padding: 1rem 1.5rem;
+  border-top: 1px solid var(--border-subtle);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background-color: var(--bg-surface-hover);
+}
+
+.skipButton {
+  font-size: 0.875rem;
+  font-weight: 500;
+  color: var(--ink-secondary);
+  padding: 0.5rem 0.875rem;
+  border-radius: var(--radius-sm);
+}
+
+.skipButton:hover {
+  color: var(--ink-primary);
+}
+
+.actionButtons {
+  display: flex;
+  gap: 0.75rem;
+}
+
+.backButton {
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: var(--ink-primary);
+  padding: 0.5rem 1rem;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background-color: var(--bg-surface);
+}
+
+.backButton:hover {
+  background-color: var(--bg-subtle);
+}
+
+.nextButton {
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: #ffffff;
+  padding: 0.5rem 1.25rem;
+  border-radius: var(--radius-sm);
+  background-color: var(--brand-primary);
+  transition: background-color var(--transition-fast);
+}
+
+.errorBanner {
+  padding: 0.75rem 1rem;
+  background-color: var(--color-error-subtle);
+  border: 1px solid var(--color-error-border);
+  color: var(--color-error);
+  font-size: 0.8125rem;
+  font-weight: 500;
+  border-radius: var(--radius-sm);
+  margin-bottom: 1rem;
+}
+
+.taxonomyStatus {
+  font-size: 0.8125rem;
+  color: var(--ink-secondary);
+  margin-bottom: 0.75rem;
+}
+
+.taxonomyError {
+  padding: 0.6rem 0.75rem;
+  border: 1px solid var(--color-warning-border);
+  background: var(--color-warning-subtle);
+  color: var(--ink-primary);
+  border-radius: var(--radius-sm);
+  font-size: 0.8125rem;
+  line-height: 1.5;
+  margin-bottom: 0.75rem;
+}
+
+.inlineRetry {
+  color: var(--brand-primary);
+  font-weight: 700;
+  text-decoration: underline;
+  font-size: inherit;
+}
+
+.switchLinkRow {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  margin-top: 1rem;
+  font-size: 0.8125rem;
+  color: var(--ink-secondary);
+}
+
+.inlineLinkButton {
+  background: none;
+  border: none;
+  color: var(--brand-primary);
+  font-weight: 600;
+  cursor: pointer;
+  text-decoration: underline;
+  padding: 0;
+  font-size: 0.8125rem;
+}
+
+.inlineLinkButton:hover {
+  color: var(--brand-primary-hover);
+}
+
+.nextButton:hover {
+  background-color: var(--brand-primary-hover);
+}
+

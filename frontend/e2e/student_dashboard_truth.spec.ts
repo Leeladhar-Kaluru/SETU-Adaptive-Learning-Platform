@@ -63,7 +63,7 @@ test('a fresh student sees empty states, not invented class or goal values', asy
   await expect(page.getByText(/25 min\/day/)).toHaveCount(0);
 });
 
-test('the board list comes from the API and a failed load disables saving', async ({ page }) => {
+test('the taxonomy comes from the API and a failed load disables saving', async ({ page }) => {
   await page.addInitScript(() => {
     localStorage.setItem('setu_auth_token', 'e2e-token');
     localStorage.setItem('setu_active_user_id', '55555555-5555-4555-8555-555555555555');
@@ -91,10 +91,16 @@ test('the board list comes from the API and a failed load disables saving', asyn
   await page.route('**/api/v1/catalogue/boards', (route) =>
     route.fulfill({ status: 503, json: { detail: 'Catalogue unavailable.' } })
   );
+  await page.route('**/api/v1/catalogue/subjects', (route) =>
+    route.fulfill({ json: [{ id: 'subject-science', code: 'SCI', canonicalName: 'Science' }] })
+  );
+  await page.route('**/api/v1/catalogue/languages', (route) =>
+    route.fulfill({ json: [{ id: 'lang-en', bcp47Tag: 'en-IN', nativeName: 'English', script: 'Latn' }] })
+  );
 
   await page.goto('/dashboard');
   await page.getByRole('button', { name: 'Edit Academic Profile' }).click();
-  await expect(page.getByText('Catalogue unavailable.')).toBeVisible();
+  await expect(page.getByText('Could not load boards, subjects, and languages.')).toBeVisible();
   await expect(page.getByRole('button', { name: 'Save Changes' })).toBeDisabled();
   await expect(page.getByRole('option', { name: /CBSE/ })).toHaveCount(0);
 });

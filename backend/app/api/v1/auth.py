@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 from app.core.database import get_db
 from app.core.config import settings
 from app.core.security import get_current_user_id
+from app.models.curriculum import CurriculumBoard, Language
 from app.models.profiles import UserProfile
 from app.services.profiles import ensure_profile_from_auth
 
@@ -28,6 +29,25 @@ class LoginRequest(BaseModel):
 @router.post("/signup")
 async def signup(req: SignupRequest, db: Session = Depends(get_db)):
     """Creates user in Supabase Auth and initializes their SETU profile."""
+    if req.role not in (None, "student", "teacher"):
+        raise HTTPException(status_code=422, detail="Choose a valid account role.")
+    if req.grade is not None and not 6 <= req.grade <= 10:
+        raise HTTPException(status_code=422, detail="Class must be between 6 and 10.")
+    if req.boardId:
+        board = db.query(CurriculumBoard).filter(
+            CurriculumBoard.id == req.boardId,
+            CurriculumBoard.active.is_(True),
+        ).first()
+        if not board:
+            raise HTTPException(status_code=422, detail="Choose a curriculum board from the list.")
+    if req.preferredLanguage:
+        language = db.query(Language).filter(
+            Language.bcp47_tag == req.preferredLanguage,
+            Language.active.is_(True),
+        ).first()
+        if not language:
+            raise HTTPException(status_code=422, detail="Choose a language from the list.")
+
     user_id_str = None
     access_token = None
 

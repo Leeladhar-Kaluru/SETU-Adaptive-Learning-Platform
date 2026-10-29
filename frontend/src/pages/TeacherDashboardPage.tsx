@@ -7,6 +7,8 @@ import {
   EvidenceMatrixRow,
   TeacherActionRow,
 } from '../services/api';
+import { useTaxonomy } from '../hooks/useTaxonomy';
+import { GRADES, gradeLabel } from '../lib/academic';
 import styles from './TeacherDashboardPage.module.css';
 
 const BAND_LABEL: Record<EvidenceBand, string> = {
@@ -50,11 +52,12 @@ export const TeacherDashboardPage: React.FC = () => {
   const [classroomError, setClassroomError] = useState<string | null>(null);
   const [isCreatingClassroom, setIsCreatingClassroom] = useState(false);
   const [newClassName, setNewClassName] = useState('');
-  const [newClassGrade, setNewClassGrade] = useState<number>(9);
-  const [newClassBoard, setNewClassBoard] = useState('board-cbse');
-  const [newClassSubject, setNewClassSubject] = useState('SCIENCE');
+  const [newClassGrade, setNewClassGrade] = useState<number | ''>('');
+  const [newClassBoard, setNewClassBoard] = useState('');
+  const [newClassSubject, setNewClassSubject] = useState('');
   const [isSubmittingClass, setIsSubmittingClass] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
+  const taxonomy = useTaxonomy(true);
 
   const [evidenceMatrix, setEvidenceMatrix] = useState<EvidenceMatrixRow[]>([]);
   const [actions, setActions] = useState<TeacherActionRow[]>([]);
@@ -151,12 +154,20 @@ export const TeacherDashboardPage: React.FC = () => {
       setCreateError('Write a classroom name first.');
       return;
     }
+    if (newClassGrade === '' || !newClassBoard || !newClassSubject) {
+      setCreateError('Choose a class, board, and subject first.');
+      return;
+    }
+    if (taxonomy.loading || taxonomy.error) {
+      setCreateError('Reference data is not available yet. Retry in a moment.');
+      return;
+    }
     setIsSubmittingClass(true);
     setCreateError(null);
     try {
       const created = await api.createClassroom({
         name: newClassName.trim(),
-        grade: newClassGrade,
+        grade: Number(newClassGrade),
         boardId: newClassBoard,
         subjectScope: newClassSubject,
       });
@@ -164,6 +175,9 @@ export const TeacherDashboardPage: React.FC = () => {
       setSelectedClassroomId(created.id);
       setIsCreatingClassroom(false);
       setNewClassName('');
+      setNewClassGrade('');
+      setNewClassBoard('');
+      setNewClassSubject('');
     } catch (err: unknown) {
       setCreateError(
         err instanceof Error ? err.message : 'SETU could not create the classroom.'
@@ -242,6 +256,20 @@ export const TeacherDashboardPage: React.FC = () => {
     Boolean(recNote.trim()) &&
     !isSubmittingRec;
 
+  const taxonomyReady =
+    !taxonomy.loading &&
+    !taxonomy.error &&
+    taxonomy.boards.length > 0 &&
+    taxonomy.subjects.length > 0;
+
+  const canCreateClass =
+    newClassName.trim().length > 0 &&
+    newClassGrade !== '' &&
+    Boolean(newClassBoard) &&
+    Boolean(newClassSubject) &&
+    taxonomyReady &&
+    !isSubmittingClass;
+
   return (
     <div className={styles.page}>
       <header>
@@ -297,41 +325,74 @@ export const TeacherDashboardPage: React.FC = () => {
             </label>
             <label>
               Class
-              <select value={newClassGrade} onChange={(e) => setNewClassGrade(Number(e.target.value))}>
-                {[6, 7, 8, 9, 10].map((grade) => (
+              <select
+                value={newClassGrade}
+                onChange={(e) => setNewClassGrade(e.target.value === '' ? '' : Number(e.target.value))}
+              >
+                <option value="">Choose a class</option>
+                {GRADES.map((grade) => (
                   <option key={grade} value={grade}>
-                    Class {grade}
+                    {gradeLabel(grade)}
                   </option>
                 ))}
               </select>
             </label>
             <label>
               Board
-              <select value={newClassBoard} onChange={(e) => setNewClassBoard(e.target.value)}>
-                <option value="board-cbse">CBSE</option>
-                <option value="board-ncert">NCERT</option>
-                <option value="board-icse">ICSE</option>
-                <option value="board-state">State board</option>
+              <select
+                value={newClassBoard}
+                onChange={(e) => setNewClassBoard(e.target.value)}
+                disabled={taxonomy.loading || Boolean(taxonomy.error)}
+              >
+                <option value="">Choose a board</option>
+                {taxonomy.boards.map((board) => (
+                  <option key={board.id} value={board.id}>
+                    {board.name}
+                  </option>
+                ))}
               </select>
             </label>
             <label>
               Subject
-              <select value={newClassSubject} onChange={(e) => setNewClassSubject(e.target.value)}>
-                <option value="SCIENCE">Science</option>
-                <option value="MATHEMATICS">Mathematics</option>
-                <option value="SOCIAL_SCIENCE">Social science</option>
-                <option value="ENGLISH">English</option>
-                <option value="HINDI">Hindi</option>
+              <select
+                value={newClassSubject}
+                onChange={(e) => setNewClassSubject(e.target.value)}
+                disabled={taxonomy.loading || Boolean(taxonomy.error)}
+              >
+                <option value="">Choose a subject</option>
+                {taxonomy.subjects.map((subject) => (
+                  <option key={subject.id} value={subject.id}>
+                    {subject.canonicalName}
+                  </option>
+                ))}
               </select>
             </label>
           </div>
+          {taxonomy.loading && (
+            <p className={styles.loadingText}>Loading boards and subjects…</p>
+          )}
+          {taxonomy.error && (
+            <div className={styles.errorBox} role="alert">
+              <strong>Reference data could not be loaded.</strong> {taxonomy.error}
+              <button type="button" className={styles.inlineRetry} onClick={taxonomy.retry}>
+                Retry
+              </button>
+            </div>
+          )}
+          {!taxonomy.loading &&
+            !taxonomy.error &&
+            (taxonomy.boards.length === 0 || taxonomy.subjects.length === 0) && (
+              <p className={styles.bad} role="alert">
+                No boards or subjects are available. Ask an administrator to add reference data.
+              </p>
+            )}
           {createError && (
             <p className={styles.bad} role="alert">
               {createError}
             </p>
           )}
           <div className={styles.rowActions}>
-            <button type="submit" className={styles.primary} disabled={isSubmittingClass}>
+            <button type="submit" className={styles.primary} disabled={!canCreateClass}>
               {isSubmittingClass ? 'Creating…' : 'Create classroom'}
             </button>
           </div>

@@ -17,7 +17,7 @@ interface AuthContextType {
     grade?: number;
     boardId?: string;
     preferredLanguage?: string;
-  }) => Promise<void>;
+  }) => Promise<UserProfileData>;
   logout: () => Promise<void>;
   updateProfile: (updates: Partial<UserProfileData>) => Promise<void>;
   openTour: () => void;
@@ -94,6 +94,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     const res = await api.signup(params);
     await applySession(res.accessToken, res.user);
     setIsTourOpen(true);
+    return res.user;
   };
 
   const logout = async () => {

@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 from app.core.database import get_db
 from app.core.security import get_current_user_id, get_current_teacher_id
 from app.models.classroom import Classroom, ClassroomMembership, TeacherAction
+from app.models.curriculum import CurriculumBoard, Subject
 from app.models.learning import ConceptEvidence, ConceptMasterySnapshot
 from app.models.profiles import UserProfile
 from app.api.v1.study import summarize_student
@@ -51,10 +52,10 @@ def _active_member_ids(db: Session, classroom_id: uuid.UUID) -> list[uuid.UUID]:
 
 
 class ClassroomCreate(BaseModel):
-    name: str = Field(min_length=1, max_length=120)
-    grade: int = 9
-    boardId: Optional[str] = "board-cbse"
-    subjectScope: str = "SCIENCE"
+    name: str = Field(min_length=2, max_length=150)
+    grade: int = Field(ge=6, le=10)
+    boardId: str
+    subjectScope: str
 
 class JoinClassroomRequest(BaseModel):
     joinCode: str = Field(min_length=1, max_length=20)
@@ -97,6 +98,19 @@ def create_classroom(
     teacher_id: uuid.UUID = Depends(get_current_teacher_id),
     db: Session = Depends(get_db)
 ):
+    board = db.query(CurriculumBoard).filter(
+        CurriculumBoard.id == req.boardId,
+        CurriculumBoard.active.is_(True),
+    ).first()
+    if not board:
+        raise HTTPException(status_code=422, detail="Choose a curriculum board from the list.")
+    subject = db.query(Subject).filter(
+        Subject.id == req.subjectScope,
+        Subject.active.is_(True),
+    ).first()
+    if not subject:
+        raise HTTPException(status_code=422, detail="Choose an available subject from the list.")
+
     join_code = generate_join_code(db)
     if join_code is None:
         raise HTTPException(

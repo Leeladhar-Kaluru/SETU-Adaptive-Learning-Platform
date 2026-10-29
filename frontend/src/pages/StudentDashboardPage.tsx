@@ -3,13 +3,12 @@ import { Link } from 'react-router-dom';
 import {
   api,
   StudentDashboardResponse,
-  ActivityHeatmapDay,
-  CatalogueBoard
+  ActivityHeatmapDay
 } from '../services/api';
 import { useAuth } from '../context/AuthContext';
+import { useTaxonomy } from '../hooks/useTaxonomy';
+import { GRADES, gradeLabel } from '../lib/academic';
 import styles from './StudentDashboardPage.module.css';
-
-const GRADES = [6, 7, 8, 9, 10];
 
 export const StudentDashboardPage: React.FC = () => {
   const { updateProfile } = useAuth();
@@ -17,8 +16,6 @@ export const StudentDashboardPage: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [selectedDay, setSelectedDay] = useState<ActivityHeatmapDay | null>(null);
-  const [boards, setBoards] = useState<CatalogueBoard[]>([]);
-  const [boardError, setBoardError] = useState<string | null>(null);
 
   // Classroom join state
   const [joinCodeInput, setJoinCodeInput] = useState('');
@@ -30,20 +27,11 @@ export const StudentDashboardPage: React.FC = () => {
   const [editName, setEditName] = useState('');
   const [editGrade, setEditGrade] = useState<number | ''>('');
   const [editBoard, setEditBoard] = useState('');
+  const [editLanguage, setEditLanguage] = useState('');
   const [editGoal, setEditGoal] = useState<number | ''>('');
   const [editError, setEditError] = useState<string | null>(null);
   const [isSavingProfile, setIsSavingProfile] = useState(false);
-
-  const loadBoards = async () => {
-    setBoardError(null);
-    try {
-      const list = await api.getBoards();
-      setBoards(list);
-    } catch (err: any) {
-      setBoards([]);
-      setBoardError(err?.message || 'Curriculum boards could not be loaded.');
-    }
-  };
+  const taxonomy = useTaxonomy(isEditOpen);
 
   const fetchDashboardData = async () => {
     try {
@@ -55,6 +43,7 @@ export const StudentDashboardPage: React.FC = () => {
         setEditName(res.profile.displayName || '');
         setEditGrade(res.profile.grade ?? '');
         setEditBoard(res.profile.boardId ?? '');
+        setEditLanguage(res.profile.preferredLanguage ?? '');
         setEditGoal(res.profile.dailyGoalMinutes ?? '');
       }
     } catch (err: any) {
@@ -66,7 +55,6 @@ export const StudentDashboardPage: React.FC = () => {
 
   useEffect(() => {
     void fetchDashboardData();
-    void loadBoards();
   }, []);
 
   const handleJoinClassroom = async (e: React.FormEvent) => {
@@ -89,8 +77,8 @@ export const StudentDashboardPage: React.FC = () => {
   const handleSaveProfile = async (e: React.FormEvent) => {
     e.preventDefault();
     setEditError(null);
-    if (editGrade === '' || !editBoard) {
-      setEditError('Choose a class and board before saving.');
+    if (editGrade === '' || !editBoard || !editLanguage) {
+      setEditError('Choose a class, board, and language before saving.');
       return;
     }
     setIsSavingProfile(true);
@@ -99,6 +87,7 @@ export const StudentDashboardPage: React.FC = () => {
         displayName: editName.trim(),
         grade: Number(editGrade),
         boardId: editBoard,
+        preferredLanguage: editLanguage,
         dailyGoalMinutes: editGoal === '' ? undefined : Number(editGoal)
       });
       setIsEditOpen(false);
@@ -500,7 +489,7 @@ export const StudentDashboardPage: React.FC = () => {
                 >
                   <option value="">Choose a class</option>
                   {GRADES.map((grade) => (
-                    <option key={grade} value={grade}>Class {grade}</option>
+                    <option key={grade} value={grade}>{gradeLabel(grade)}</option>
                   ))}
                 </select>
               </div>
@@ -511,24 +500,50 @@ export const StudentDashboardPage: React.FC = () => {
                   id="edit-board"
                   value={editBoard}
                   onChange={(e) => setEditBoard(e.target.value)}
-                  disabled={Boolean(boardError)}
+                  disabled={taxonomy.loading || Boolean(taxonomy.error)}
                 >
                   <option value="">Choose a board</option>
-                  {boards.map((board) => (
+                  {taxonomy.boards.map((board) => (
                     <option key={board.id} value={board.id}>
-                      {board.code ? `${board.code} — ${board.name}` : board.name}
+                      {board.name}
                     </option>
                   ))}
                 </select>
-                {boardError && (
-                  <p className={styles.formError} role="alert">
-                    {boardError}{' '}
-                    <button type="button" className={styles.editBtn} onClick={() => void loadBoards()}>
-                      Retry
-                    </button>
-                  </p>
-                )}
               </div>
+
+              <div className={styles.formGroup}>
+                <label htmlFor="edit-language">Learning Language</label>
+                <select
+                  id="edit-language"
+                  value={editLanguage}
+                  onChange={(e) => setEditLanguage(e.target.value)}
+                  disabled={taxonomy.loading || Boolean(taxonomy.error)}
+                >
+                  <option value="">Choose a language</option>
+                  {taxonomy.languages.map((language) => (
+                    <option key={language.id} value={language.bcp47Tag}>
+                      {language.nativeName}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {taxonomy.loading && (
+                <p className={styles.formHint}>Loading boards, subjects, and languages…</p>
+              )}
+              {taxonomy.error && (
+                <p className={styles.formError} role="alert">
+                  {taxonomy.error}{' '}
+                  <button type="button" className={styles.editBtn} onClick={taxonomy.retry}>
+                    Retry
+                  </button>
+                </p>
+              )}
+              {!taxonomy.loading && !taxonomy.error && (taxonomy.boards.length === 0 || taxonomy.languages.length === 0) && (
+                <p className={styles.formError} role="alert">
+                  No reference data is available. Ask an administrator to add boards and languages.
+                </p>
+              )}
 
               <div className={styles.formGroup}>
                 <label htmlFor="edit-goal">Daily Learning Goal (Minutes)</label>
@@ -561,7 +576,13 @@ export const StudentDashboardPage: React.FC = () => {
                 <button
                   type="submit"
                   className={styles.saveBtn}
-                  disabled={isSavingProfile || Boolean(boardError)}
+                  disabled={
+                    isSavingProfile ||
+                    taxonomy.loading ||
+                    Boolean(taxonomy.error) ||
+                    taxonomy.boards.length === 0 ||
+                    taxonomy.languages.length === 0
+                  }
                 >
                   {isSavingProfile ? 'Saving…' : 'Save Changes'}
                 </button>

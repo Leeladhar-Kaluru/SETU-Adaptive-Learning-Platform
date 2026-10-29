@@ -32,6 +32,20 @@ export interface CatalogueBoard {
   officialUrl?: string | null;
 }
 
+export interface CatalogueSubject {
+  id: string;
+  code: string;
+  canonicalName: string;
+  name: string;
+}
+
+export interface CatalogueLanguage {
+  id: string;
+  bcp47Tag: string;
+  nativeName: string;
+  script: string;
+}
+
 export interface AuthResponse {
   accessToken: string;
   user: UserProfileData;
@@ -309,6 +323,14 @@ export const api = {
   // Catalogue
   async getBoards(): Promise<CatalogueBoard[]> {
     return request<CatalogueBoard[]>('/catalogue/boards');
+  },
+
+  async getSubjects(): Promise<CatalogueSubject[]> {
+    return request<CatalogueSubject[]>('/catalogue/subjects');
+  },
+
+  async getLanguages(): Promise<CatalogueLanguage[]> {
+    return request<CatalogueLanguage[]>('/catalogue/languages');
   },
 
   async getCatalogue(params?: { query?: string; grade?: number; subjectId?: string; boardId?: string }): Promise<CatalogueResource[]> {

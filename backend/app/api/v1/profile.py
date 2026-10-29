@@ -1,12 +1,13 @@
 import uuid
 import datetime
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from typing import Optional, List, Dict, Any
 from sqlalchemy.orm import Session
 from sqlalchemy import func, desc
 from app.core.database import get_db
 from app.core.security import get_current_user_id
+from app.models.curriculum import CurriculumBoard, Subject, Language
 from app.models.profiles import UserProfile
 from app.models.learning import (
     StudyEvent,
@@ -20,13 +21,13 @@ from app.models.classroom import Classroom, ClassroomMembership
 router = APIRouter()
 
 class ProfileUpdateRequest(BaseModel):
-    displayName: Optional[str] = None
-    grade: Optional[int] = None
+    displayName: Optional[str] = Field(default=None, min_length=1, max_length=150)
+    grade: Optional[int] = Field(default=None, ge=6, le=10)
     boardId: Optional[str] = None
     preferredLanguage: Optional[str] = None
     subjectsInterested: Optional[List[str]] = None
     learningGoals: Optional[List[str]] = None
-    dailyGoalMinutes: Optional[int] = None
+    dailyGoalMinutes: Optional[int] = Field(default=None, ge=10, le=120)
     accessibilityPreferences: Optional[Dict[str, Any]] = None
     onboardingCompleted: Optional[bool] = None
     tourCompleted: Optional[bool] = None
@@ -266,6 +267,51 @@ async def update_profile(
     profile = db.query(UserProfile).filter(UserProfile.id == user_id).first()
     if not profile:
         raise HTTPException(status_code=404, detail="Profile not found. Complete signup or onboarding.")
+
+    if req.boardId is not None:
+        board = db.query(CurriculumBoard).filter(
+            CurriculumBoard.id == req.boardId,
+            CurriculumBoard.active.is_(True),
+        ).first()
+        if not board:
+            raise HTTPException(status_code=422, detail="Choose a curriculum board from the list.")
+
+    if req.preferredLanguage is not None:
+        language = db.query(Language).filter(
+            Language.bcp47_tag == req.preferredLanguage,
+            Language.active.is_(True),
+        ).first()
+        if not language:
+            raise HTTPException(status_code=422, detail="Choose a language from the list.")
+
+    if req.subjectsInterested is not None:
+        requested = list(dict.fromkeys(req.subjectsInterested))
+        valid = {
+            subject.id
+            for subject in db.query(Subject).filter(
+                Subject.id.in_(requested),
+                Subject.active.is_(True),
+            ).all()
+        }
+        if len(valid) != len(requested):
+            raise HTTPException(
+                status_code=422,
+                detail="One or more subjects are not available.",
+            )
+
+    prospective_grade = req.grade if req.grade is not None else profile.grade
+    prospective_board = req.boardId if req.boardId is not None else profile.board_id
+    prospective_language = (
+        req.preferredLanguage
+        if req.preferredLanguage is not None
+        else profile.preferred_language
+    )
+    if req.onboardingCompleted and profile.role == "student":
+        if not (prospective_grade and prospective_board and prospective_language):
+            raise HTTPException(
+                status_code=422,
+                detail="Choose your class, board, and language before finishing setup.",
+            )
 
     if req.displayName is not None:
         profile.display_name = req.displayName.strip()
