@@ -4,6 +4,7 @@ import asyncio
 import httpx
 from typing import List, Dict, Any, Optional
 from app.core.config import settings
+from app.services.text_sanitize import sanitize_prose
 
 
 class EmbeddingUnavailableError(RuntimeError):
@@ -141,16 +142,21 @@ class AIProviderService:
             resp = None
             delays = [2.0, 6.0, 12.0]
             for attempt in range(len(delays) + 1):
-                resp = await client.post(url, json=payload)
-                if resp.status_code == 200:
+                try:
+                    resp = await client.post(url, json=payload)
+                except httpx.HTTPError:
+                    # Local providers (LM Studio) abort in-flight requests when a
+                    # model reloads or the server hiccups; retry like a 5xx.
+                    resp = None
+                if resp is not None and resp.status_code == 200:
                     break
-                if attempt < len(delays) and _is_transient_response(resp):
+                if attempt < len(delays):
                     await asyncio.sleep(delays[attempt])
                     continue
                 break
 
             if resp is None or resp.status_code != 200:
-                status_code = resp.status_code if resp is not None else "unknown"
+                status_code = resp.status_code if resp is not None else "unreachable"
                 body = resp.text if resp is not None else ""
                 raise RuntimeError(
                     f"LLM chat completion failed with status {status_code}: {body}"
@@ -189,7 +195,7 @@ def _is_transient_response(response: httpx.Response) -> bool:
 
 
 def _clean_generated_text(text: str) -> str:
-    """Removes corrupt bytes and control characters from provider output."""
+    """Removes corrupt bytes, control characters and LaTeX/markdown artifacts."""
     cleaned = str(text).replace("\r\n", "\n").replace("\r", "\n")
     # A replacement character means the provider emitted an invalid byte.
     cleaned = re.sub(r"\ufffd\?*", " ", cleaned)
@@ -197,7 +203,9 @@ def _clean_generated_text(text: str) -> str:
     cleaned = re.sub(r"[ \t]+\n", "\n", cleaned)
     cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
     cleaned = re.sub(r"[ \t]{2,}", " ", cleaned)
-    return cleaned.strip()
+    # Convert raw LaTeX ($82^{\circ}30' E$) and markdown emphasis into plain
+    # unicode prose so students never see dollar signs or asterisks.
+    return sanitize_prose(cleaned)
 
 
 def _is_complete_prose(text: str) -> bool:

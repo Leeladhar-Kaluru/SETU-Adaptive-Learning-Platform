@@ -7,6 +7,7 @@ import jsonschema
 from collections import Counter
 from typing import Dict, Any, List, Optional
 from app.core.ai_provider import ai_provider
+from app.services.text_sanitize import sanitize_tree
 
 # Load schemas
 _curr = os.path.dirname(os.path.abspath(__file__))
@@ -1330,11 +1331,13 @@ class LessonGeneratorService:
             f"- checkpointTest: [1-2 independent questions]\n"
             f"- takeaways: [2-3 key takeaway sentences]\n\n"
             f"Every question MUST include questionId, type, prompt, conceptIds, answerKey, feedback.\n"
-            f"type MUST be one of: multiple_choice, numeric, short_text.\n"
-            f"multiple_choice MUST include an options array of at least two strings.\n"
+            f"Every practice and checkpointTest question MUST be type 'multiple_choice' "
+            f"with an options array of exactly 4 strings, and answerKey.answer equal to "
+            f"exactly one of the options. No fill-in-the-blank or short-answer questions.\n"
             f"conceptIds MUST be a non-empty array of short lowercase concept identifiers.\n"
             f"hints MUST be an array of strings. feedback MUST be a string.\n\n"
             f"Keep the whole JSON compact (at most 4 content blocks).\n"
+            f"Never use LaTeX or markdown in any text field; write numbers like 82°30′ E in plain text.\n"
             f"Write explanations and questions in the language identified by '{safe_language}'. "
             f"Keep source terms, names and numbers exactly as they appear in the chunks.\n"
             f"Return only the JSON object, with no markdown fences or commentary."
@@ -1383,6 +1386,18 @@ class LessonGeneratorService:
             )
             package["sourceRefs"] = source_refs
             package["validation"] = {"status": "draft", "checks": []}
+            # Practice and checkpoint must stay answerable in the UI: options only.
+            # Non-choice questions are dropped, never converted by guessing options.
+            package["practice"] = [
+                q for q in (package.get("practice") or [])
+                if q.get("type") == "multiple_choice"
+            ]
+            package["checkpointTest"] = [
+                q for q in (package.get("checkpointTest") or [])
+                if q.get("type") == "multiple_choice"
+            ]
+            # Strip LaTeX/markdown artifacts so lesson text renders as plain prose.
+            package = sanitize_tree(package)
         except Exception as exc:
             raise RuntimeError(f"Lesson generation failed: {exc}") from exc
 

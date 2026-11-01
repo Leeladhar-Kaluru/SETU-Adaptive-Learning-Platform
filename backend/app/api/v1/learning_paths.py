@@ -12,6 +12,7 @@ from app.models.documents import Document, DocumentChunk, DocumentPage
 from app.models.learning import LearningPath, PathLesson, LessonVersion
 from app.services.generation_queue import enqueue_lesson_generation, requeue_failed_lessons
 from app.services.lesson_generator import lesson_generator_service
+from app.services.text_sanitize import sanitize_tree
 
 router = APIRouter()
 
@@ -350,5 +351,8 @@ def get_lesson_package(
         raise HTTPException(status_code=404, detail="Lesson package content not ready")
 
     package = _redact_answer_keys(dict(version.lesson_package_json))
+    # Existing packages were generated before the plain-text policy; sanitize
+    # LaTeX/markdown artifacts at read time so stored lessons render cleanly.
+    package = sanitize_tree(package)
     package["lessonVersionId"] = str(version.id)
     return package

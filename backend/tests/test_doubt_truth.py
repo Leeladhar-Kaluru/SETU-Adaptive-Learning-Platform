@@ -55,7 +55,7 @@ async def test_provider_failure_is_retryable_then_answered(db, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_insufficient_evidence_is_refused_without_calling_provider(db, monkeypatch):
+async def test_no_evidence_answers_from_general_knowledge_labeled(db, monkeypatch):
     from app.models.documents import Document, DocumentChunk
     from app.models.learning import LearningPath
 
@@ -80,7 +80,7 @@ async def test_insufficient_evidence_is_refused_without_calling_provider(db, mon
     db.add(path)
     db.commit()
 
-    called = {"provider": 0, "search": 0}
+    called = {"provider": 0, "search": 0, "prompt": ""}
 
     async def fake_search(**kwargs):
         called["search"] += 1
@@ -88,7 +88,8 @@ async def test_insufficient_evidence_is_refused_without_calling_provider(db, mon
 
     async def fake_chat(**kwargs):
         called["provider"] += 1
-        return "This must never be used when a source exists."
+        called["prompt"] = kwargs["messages"][0]["content"]
+        return "Photosynthesis converts light energy into chemical energy. Your book does not cover this."
 
     monkeypatch.setattr(sync_module.retrieval_service, "hybrid_search", fake_search)
     monkeypatch.setattr(sync_module.ai_provider, "generate_chat", fake_chat)
@@ -99,9 +100,12 @@ async def test_insufficient_evidence_is_refused_without_calling_provider(db, mon
     )
     assert result["status"] == "answered"
     assert result["answerJson"]["citations"] == []
-    assert result["answerJson"]["limitations"] == "insufficient_source_evidence"
-    assert "does not contain enough evidence" in result["answerJson"]["answer"]
-    assert called["provider"] == 0
+    # The book does not mention it, so the tutor answers from its own
+    # knowledge and labels the answer honestly — never a fabricated page.
+    assert result["answerJson"]["limitations"] == "general_knowledge"
+    assert "Photosynthesis" in result["answerJson"]["answer"]
+    assert "Never invent a page reference" in called["prompt"]
+    assert called["provider"] == 1
     assert called["search"] == 1
 
 

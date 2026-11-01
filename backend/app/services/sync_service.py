@@ -135,6 +135,7 @@ class SyncService:
                 general_prompt = (
                     "You are the SETU Academic Tutor for a school student.\n"
                     "Answer in at most 120 words, in plain language, without a greeting.\n"
+                    "Never write LaTeX or markdown; write numbers like 82°30′ E in plain text.\n"
                     "The student has not attached any book, so answer from general "
                     "knowledge and never invent a page reference or citation.\n"
                     f"Reply in the student's preferred language (language code: {reply_language}).\n"
@@ -180,7 +181,7 @@ class SyncService:
             results = retrieval.get("results", [])
             supporting_results = select_supporting_citations(results, question_text)
             evidence_str = "\n".join(
-                f"- Page {r['pageStart']}: {(r.get('text') or '')[:1500]}"
+                f"- Page {r['pageStart']}: {(r.get('text') or '')[:1200]}"
                 for r in results
             )
 
@@ -218,19 +219,40 @@ class SyncService:
                 for r in supporting_results
             ]
 
+            # The tutor always answers: grounded when the book supports the
+            # question, labeled general knowledge when it does not.
             if retrieval.get("insufficient_evidence") or not results:
+                prompt = (
+                    "You are the SETU Academic Tutor for a school student.\n"
+                    "Answer in at most 120 words, in plain language, without a greeting.\n"
+                    "Never write LaTeX or markdown; write numbers like 82°30′ E in plain text.\n"
+                    "The student's book does not mention this, so answer from your own "
+                    "knowledge and say plainly that the book does not cover it.\n"
+                    "Never invent a page reference or citation.\n"
+                    f"Reply in the student's preferred language (language code: {reply_language}).\n"
+                    f"Student Question: {question_text}\n"
+                )
+                llm_answer = await ai_provider.generate_chat(
+                    messages=[{"role": "user", "content": prompt}],
+                    temperature=0.3,
+                    max_tokens=900,
+                    require_complete=True,
+                )
+                if not llm_answer or not str(llm_answer).strip():
+                    raise RuntimeError("empty tutor response")
                 answer_payload = {
-                    "answer": "The selected document does not contain enough evidence to answer this question accurately. Please review the relevant part of your source or consult your teacher.",
+                    "answer": llm_answer,
                     "citations": [],
-                    "limitations": "insufficient_source_evidence",
+                    "limitations": "general_knowledge",
                     "answeredAt": datetime.datetime.utcnow().isoformat()
                 }
             else:
-                reply_language = _student_language(db, owner_id)
                 prompt = (
                     f"You are the SETU Academic Tutor for a school student.\n"
                     f"Answer in at most 120 words, in plain language, without a greeting.\n"
-                    f"Use only the source evidence below. If the evidence does not contain the answer, say so plainly.\n"
+                    f"Never write LaTeX or markdown; write numbers like 82°30′ E in plain text.\n"
+                    f"Prefer the source evidence below. When the evidence does not contain the "
+                    f"answer, say so in one sentence and then answer from your own knowledge.\n"
                     f"Reply in the student's preferred language (language code: {reply_language}).\n"
                     f"Student Question: {question_text}\n"
                     f"Source Evidence from the Uploaded Document:\n{evidence_str}\n"

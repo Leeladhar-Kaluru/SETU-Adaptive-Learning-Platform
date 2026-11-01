@@ -1,4 +1,5 @@
 import datetime
+import re
 import uuid
 from dataclasses import dataclass
 from typing import Any, Optional
@@ -49,6 +50,52 @@ def _normalize(value: Any) -> str:
     return " ".join(str(value).split()).strip().casefold()
 
 
+_SHORT_WORD = re.compile(r"[a-z0-9]+")
+_SHORT_STOPWORDS = {
+    "the", "and", "for", "are", "was", "were", "with", "that", "this",
+    "from", "have", "has", "had", "but", "not", "you", "your", "all",
+    "can", "get", "out", "one", "two", "his", "her", "its", "our",
+}
+
+
+def _short_text_tokens(value: Any) -> set[str]:
+    normalized = _normalize(value)
+    return {
+        token
+        for token in _SHORT_WORD.findall(normalized)
+        if len(token) > 1 and token not in _SHORT_STOPWORDS
+    }
+
+
+def _short_text_match(response: Any, accepted: list) -> bool:
+    """Grade a short answer tolerantly, the way a teacher reads one.
+
+    Kids write "gondwana" where the key says "Gondwana land". Exact string
+    equality is too brittle, so an answer is correct when it is an exact
+    accepted form, or when one side's content words are contained in the
+    other side's, or when nearly all expected content words appear.
+    """
+    given = _normalize(response)
+    accepted_values = [_normalize(item) for item in accepted if str(item).strip()]
+    if not accepted_values or not given:
+        return False
+    if given in accepted_values:
+        return True
+    given_tokens = _short_text_tokens(given)
+    if not given_tokens:
+        return False
+    for expected_text in accepted_values:
+        expected_tokens = _short_text_tokens(expected_text)
+        if not expected_tokens:
+            continue
+        if expected_tokens <= given_tokens or given_tokens <= expected_tokens:
+            return True
+        overlap = len(given_tokens & expected_tokens)
+        if overlap >= max(2, len(expected_tokens) - 1):
+            return True
+    return False
+
+
 def grade_response(question: Question, response: Any) -> tuple[bool, float, str, Any]:
     answer_key = question.answer_key_json or {}
     expected = answer_key.get("answer")
@@ -60,14 +107,14 @@ def grade_response(question: Question, response: Any) -> tuple[bool, float, str,
         correct = _normalize(response) == _normalize(expected)
     elif question.type == "numeric":
         try:
-            given_value = float(str(response).strip())
-            expected_value = float(str(expected).strip())
+            given_value = float(str(response).strip().replace(",", ""))
+            expected_value = float(str(expected).strip().replace(",", ""))
         except (TypeError, ValueError) as exc:
             raise ValueError("Enter a numeric answer.") from exc
         correct = abs(given_value - expected_value) <= max(1e-6, abs(expected_value) * 0.001)
     elif question.type == "short_text":
         accepted = answer_key.get("acceptedAnswers") or [expected]
-        correct = _normalize(response) in {_normalize(item) for item in accepted}
+        correct = _short_text_match(response, accepted)
     else:
         raise UnsupportedQuestionTypeError(
             f"Question type '{question.type}' cannot be graded deterministically."
