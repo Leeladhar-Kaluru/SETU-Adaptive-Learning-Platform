@@ -259,16 +259,6 @@ export const LessonReaderPage: React.FC = () => {
           }
         });
 
-        await db.cachedAnswers.put({
-          clientDoubtId: payload.clientDoubtId,
-          ownerId: user.id,
-          doubtId: res.id,
-          questionText: payload.questionText,
-          answer: answerPayload.answer,
-          citations: answerPayload.citations || [],
-          cachedAt: answerPayload.answeredAt || new Date().toISOString()
-        });
-
         setDoubtResponse({
           status: 'answered',
           answer: answerPayload.answer,
@@ -1059,7 +1049,9 @@ export const LessonReaderPage: React.FC = () => {
                   }
                 >
                   {doubtResponse.status === 'answered'
-                    ? 'Answer from your sources'
+                    ? doubtResponse.limitations === 'general_knowledge'
+                      ? 'Answer from general knowledge'
+                      : 'Answer from your sources'
                     : doubtResponse.status === 'queued'
                       ? 'Stored in Offline Queue'
                       : 'Could not answer yet'}
@@ -1070,6 +1062,11 @@ export const LessonReaderPage: React.FC = () => {
                 {doubtResponse.limitations === 'insufficient_source_evidence' && (
                   <div className={styles.limitationNote}>
                     The uploaded source does not contain enough evidence for a grounded answer.
+                  </div>
+                )}
+                {doubtResponse.limitations === 'general_knowledge' && (
+                  <div className={styles.limitationNote}>
+                    General knowledge — not from your books. Add a source for page-cited answers.
                   </div>
                 )}
                 {doubtResponse.retryable && (

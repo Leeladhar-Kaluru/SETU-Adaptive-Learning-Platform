@@ -1,5 +1,5 @@
-import React, { useEffect, useRef, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { useLocation, useNavigate } from 'react-router-dom';
 import {
   ArrowRight,
   BookOpen,
@@ -13,7 +13,7 @@ import {
 } from 'lucide-react';
 import { api } from '../services/api';
 import { useAuth } from '../context/AuthContext';
-import { db } from '../db/indexedDB';
+import { db, getAllDoubts, queueDoubtOffline, type OfflineDoubt } from '../db/indexedDB';
 import { syncManager } from '../services/syncManager';
 import { useDialogFocus } from '../hooks/useDialogFocus';
 import styles from './AskSetu.module.css';
@@ -33,6 +33,7 @@ type ChatEntry = {
   citations: Citation[];
   limitations?: string | null;
   queued?: boolean;
+  syncStatus?: string;
 };
 
 const makeId = () =>
@@ -40,9 +41,35 @@ const makeId = () =>
     ? `doubt_${crypto.randomUUID()}`
     : `doubt_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 
+const toEntry = (row: OfflineDoubt): ChatEntry => {
+  const payload = row.answerPayload;
+  const queued = !row.synced;
+  let answer: string;
+  if (payload?.answer) {
+    answer = payload.answer;
+  } else if (row.status === 'syncing') {
+    answer = 'Sending your question to SETU…';
+  } else if (queued) {
+    answer =
+      'Saved on this device. Your question will be sent automatically when you are back online, and the answer will appear here.';
+  } else {
+    answer = row.lastError || 'SETU could not answer that yet.';
+  }
+  return {
+    id: row.clientDoubtId,
+    question: row.questionText,
+    answer,
+    citations: (payload?.citations || []) as Citation[],
+    limitations: payload?.limitations ?? null,
+    queued,
+    syncStatus: row.synced ? 'answered' : row.status,
+  };
+};
+
 export const AskSetu: React.FC = () => {
   const { user } = useAuth();
   const navigate = useNavigate();
+  const location = useLocation();
   const [isOpen, setIsOpen] = useState(false);
   const [question, setQuestion] = useState('');
   const [entries, setEntries] = useState<ChatEntry[]>([]);
@@ -54,6 +81,9 @@ export const AskSetu: React.FC = () => {
   const dialogRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const threadEndRef = useRef<HTMLDivElement>(null);
+  const wasSyncingRef = useRef(false);
+
+  const pathId = new URLSearchParams(location.search).get('pathId') || undefined;
 
   useDialogFocus(dialogRef, isOpen, () => setIsOpen(false));
 
@@ -68,11 +98,30 @@ export const AskSetu: React.FC = () => {
     };
   }, []);
 
+  const loadThread = useCallback(async () => {
+    if (!user) return;
+    const rows = await getAllDoubts(user.id);
+    setEntries(rows.slice().reverse().map(toEntry));
+  }, [user]);
+
   useEffect(() => {
     if (isOpen) {
+      void loadThread();
       window.setTimeout(() => inputRef.current?.focus(), 80);
     }
-  }, [isOpen]);
+  }, [isOpen, loadThread]);
+
+  // After every sync pass, re-read the outbox so offline questions that just
+  // got answered by the server appear in the thread.
+  useEffect(() => {
+    if (!user) return;
+    return syncManager.subscribe((isSyncing) => {
+      if (wasSyncingRef.current && !isSyncing) {
+        void loadThread();
+      }
+      wasSyncingRef.current = isSyncing;
+    });
+  }, [user, loadThread]);
 
   useEffect(() => {
     threadEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
@@ -90,14 +139,11 @@ export const AskSetu: React.FC = () => {
 
     if (!navigator.onLine) {
       try {
-        await db.doubtOutbox.put({
+        await queueDoubtOffline({
           clientDoubtId,
           ownerId: user.id,
-          pathId: '',
+          pathId: pathId || '',
           questionText: text,
-          status: 'queued',
-          synced: false,
-          submittedAt: new Date().toISOString(),
         });
         await syncManager.refreshPending();
         setEntries((prev) => [
@@ -106,10 +152,11 @@ export const AskSetu: React.FC = () => {
             id: clientDoubtId,
             question: text,
             answer:
-              'Saved on this device. Your question will be sent automatically when you are back online, and the answer will appear in Doubts.',
+              'Saved on this device. Your question will be sent automatically when you are back online, and the answer will appear here.',
             citations: [],
             limitations: null,
             queued: true,
+            syncStatus: 'queued',
           },
         ]);
       } catch {
@@ -122,17 +169,22 @@ export const AskSetu: React.FC = () => {
     }
 
     try {
-      const result = await api.askDoubt({ clientDoubtId, questionText: text });
+      const result = await api.askDoubt({
+        clientDoubtId,
+        questionText: text,
+        ...(pathId ? { pathId } : {}),
+      });
       const payload = result.answerJson || {};
       if (result.status === 'answered' && payload.answer) {
-        await db.doubtOutbox.put({
+        await queueDoubtOffline({
           clientDoubtId,
           ownerId: user.id,
-          pathId: '',
+          pathId: pathId || '',
           questionText: text,
+        });
+        await db.doubtOutbox.update(clientDoubtId, {
           status: 'answered',
           synced: true,
-          submittedAt: new Date().toISOString(),
           answerPayload: {
             answer: payload.answer,
             citations: payload.citations || [],
@@ -196,7 +248,10 @@ export const AskSetu: React.FC = () => {
                   <Sparkles size={12} /> Your study companion
                 </span>
                 <h2 id="ask-setu-title">Ask SETU</h2>
-                <p>Grounded answers from the books you add — never invented.</p>
+                <p>
+                  Answers from your books show the exact page. General questions are
+                  answered honestly and labeled.
+                </p>
               </div>
               <button
                 type="button"
@@ -218,8 +273,9 @@ export const AskSetu: React.FC = () => {
                   </span>
                   <h3>Stuck on something?</h3>
                   <p>
-                    Ask about any topic in your books. If you have not added a source yet,
-                    SETU will tell you honestly instead of guessing.
+                    Ask about any topic in your books — answers cite the exact page.
+                    Questions beyond your books are answered from general knowledge
+                    and labeled honestly.
                   </p>
                   <div className={styles.prompts}>
                     {['Explain this topic simply', 'Why does this happen?', 'Give me an example'].map(
@@ -244,11 +300,23 @@ export const AskSetu: React.FC = () => {
                   <div
                     className={`${styles.answer} ${
                       entry.limitations === 'no_source_attached' ? styles.answerNotice : ''
-                    } ${entry.queued ? styles.answerQueued : ''}`}
+                    } ${entry.limitations === 'general_knowledge' ? styles.answerGeneral : ''} ${
+                      entry.queued ? styles.answerQueued : ''
+                    }`}
                   >
-                    {entry.queued && (
+                    {entry.syncStatus === 'syncing' && (
+                      <span className={styles.answerTag}>
+                        <Loader2 size={12} className={styles.spin} /> Sending…
+                      </span>
+                    )}
+                    {entry.queued && entry.syncStatus !== 'syncing' && (
                       <span className={styles.answerTag}>
                         <WifiOff size={12} /> Saved offline
+                      </span>
+                    )}
+                    {entry.limitations === 'general_knowledge' && (
+                      <span className={`${styles.answerTag} ${styles.answerTagGeneral}`}>
+                        <Sparkles size={12} /> General knowledge
                       </span>
                     )}
                     {entry.limitations === 'no_source_attached' && (
@@ -257,6 +325,11 @@ export const AskSetu: React.FC = () => {
                       </span>
                     )}
                     <p>{entry.answer}</p>
+                    {entry.limitations === 'general_knowledge' && (
+                      <p className={styles.generalNote}>
+                        Not from your books — add a source for page-cited answers.
+                      </p>
+                    )}
                     {entry.limitations === 'no_source_attached' && (
                       <button
                         type="button"
@@ -323,7 +396,7 @@ export const AskSetu: React.FC = () => {
                 maxLength={2000}
                 placeholder={
                   isOnline
-                    ? 'Ask anything from your books…'
+                    ? 'Ask about your books — or anything you are curious about.'
                     : 'You are offline — ask now and it will sync later.'
                 }
                 aria-label="Your question"

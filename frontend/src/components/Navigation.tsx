@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { NavLink } from 'react-router-dom';
 import {
+  AlertTriangle,
   BookOpen,
   Download,
   GraduationCap,
@@ -28,6 +29,7 @@ export const Navigation: React.FC = () => {
   const [isOnline, setIsOnline] = useState(typeof navigator !== 'undefined' ? navigator.onLine : true);
   const [isSyncing, setIsSyncing] = useState(false);
   const [pendingCount, setPendingCount] = useState(0);
+  const [lastSyncError, setLastSyncError] = useState<string | null>(null);
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
   const [lessonHref, setLessonHref] = useState('/');
 
@@ -36,9 +38,10 @@ export const Navigation: React.FC = () => {
     const handleOffline = () => setIsOnline(false);
     window.addEventListener('online', handleOnline);
     window.addEventListener('offline', handleOffline);
-    const unsubscribe = syncManager.subscribe((syncing, count) => {
+    const unsubscribe = syncManager.subscribe((syncing, count, lastError) => {
       setIsSyncing(syncing);
       setPendingCount(count);
+      setLastSyncError(lastError);
     });
     return () => {
       window.removeEventListener('online', handleOnline);
@@ -141,8 +144,14 @@ export const Navigation: React.FC = () => {
             {isOnline ? 'Online' : 'Offline'}
           </div>
           {pendingCount > 0 && isOnline && (
-            <button type="button" className={styles.syncButton} onClick={() => syncManager.syncPendingData()} disabled={isSyncing}>
-              {isSyncing ? 'Syncing…' : 'Sync now'}
+            <button
+              type="button"
+              className={`${styles.syncButton} ${lastSyncError ? styles.syncButtonError : ''}`}
+              onClick={() => void syncManager.syncPendingData()}
+              disabled={isSyncing}
+            >
+              {lastSyncError ? <AlertTriangle size={14} aria-hidden="true" /> : null}
+              {isSyncing ? 'Syncing…' : lastSyncError ? 'Last sync failed — Retry' : 'Sync now'}
             </button>
           )}
           <button type="button" className={styles.tourTriggerButton} onClick={openTour}>

@@ -220,6 +220,12 @@
   cursor: not-allowed;
 }
 
+.syncButtonError {
+  color: var(--color-error);
+  border-color: var(--color-error-border);
+  background: var(--color-error-subtle);
+}
+
 .userBlock {
   display: flex;
   align-items: center;
@@ -380,9 +386,17 @@
     padding: 4px 8px;
   }
 
-  .tourTriggerButton,
-  .syncButton {
+  .tourTriggerButton {
     display: none;
+  }
+
+  .syncButton {
+    padding: 6px 11px;
+    border: 1px solid var(--border-medium);
+    border-radius: var(--radius-full);
+    background: var(--bg-surface);
+    font-size: 11.5px;
+    min-height: 0;
   }
 
   .userBlock {

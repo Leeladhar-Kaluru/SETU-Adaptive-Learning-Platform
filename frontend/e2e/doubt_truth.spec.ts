@@ -274,3 +274,82 @@ test('the doubts view says No doubts yet without inventing history', async ({ pa
   await page.goto('/doubts');
   await expect(page.getByText('No doubts yet.')).toBeVisible();
 });
+
+test('Ask SETU answers a general question and labels it as general knowledge', async ({ page }) => {
+  await signIn(page);
+  await page.route('**/api/v1/doubts', async (route) => {
+    if (route.request().method() !== 'POST') return route.fallback();
+    await route.fulfill({
+      json: {
+        id: 'doubt-gk',
+        status: 'answered',
+        answerJson: {
+          answer: 'Photosynthesis is how plants make food from sunlight, water and carbon dioxide.',
+          citations: [],
+          limitations: 'general_knowledge',
+          answeredAt: new Date().toISOString(),
+        },
+      },
+    });
+  });
+
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Ask SETU a question' }).click();
+  await page.getByLabel('Your question').fill('What is photosynthesis?');
+  await page.getByRole('button', { name: 'Send question' }).click();
+
+  await expect(
+    page.getByText('Photosynthesis is how plants make food from sunlight, water and carbon dioxide.')
+  ).toBeVisible();
+  await expect(page.getByText('General knowledge', { exact: true })).toBeVisible();
+  await expect(
+    page.getByText('Not from your books — add a source for page-cited answers.')
+  ).toBeVisible();
+  await expect(page.getByText('Citations', { exact: false })).toHaveCount(0);
+});
+
+test('an Ask SETU question asked offline shows its answer in the chat thread after reconnecting', async ({ page, context }) => {
+  await signIn(page);
+  await page.route('**/api/v1/sync/doubts', async (route) => {
+    const body = route.request().postDataJSON();
+    const doubt = body.doubts[0];
+    await route.fulfill({
+      json: {
+        results: [
+          {
+            id: 'doubt-off',
+            clientDoubtId: doubt.clientDoubtId,
+            status: 'answered',
+            questionText: doubt.questionText,
+            answerJson: {
+              answer: 'The nucleus controls the activities of the cell.',
+              citations: [],
+              limitations: 'general_knowledge',
+              answeredAt: new Date().toISOString(),
+            },
+          },
+        ],
+      },
+    });
+  });
+
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Ask SETU a question' }).click();
+  await context.setOffline(true);
+  await page.getByLabel('Your question').fill('What does the nucleus do?');
+  await page.getByRole('button', { name: 'Send question' }).click();
+
+  await expect(page.getByText('Saved offline', { exact: true })).toBeVisible();
+  const queued = await readOutbox(page);
+  expect(queued).toHaveLength(1);
+  expect(queued[0].synced).toBe(false);
+
+  await context.setOffline(false);
+  await expect.poll(async () => (await readOutbox(page))[0]?.synced).toBe(true);
+  await expect
+    .poll(() =>
+      page.getByText('The nucleus controls the activities of the cell.').isVisible()
+    )
+    .toBe(true);
+  await expect(page.getByText('General knowledge', { exact: true })).toBeVisible();
+});

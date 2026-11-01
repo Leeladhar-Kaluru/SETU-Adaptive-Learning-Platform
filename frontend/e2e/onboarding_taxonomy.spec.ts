@@ -43,9 +43,11 @@ test('a failed taxonomy load shows an error, disables selects, and retries', asy
   let languageAttempts = 0;
   await page.route('**/api/v1/catalogue/boards', (route) => route.fulfill({ json: boards }));
   await page.route('**/api/v1/catalogue/subjects', (route) => route.fulfill({ json: subjects }));
+  // The API client retries a 503 once by itself, so the first two attempts must
+  // fail before the error state is honest.
   await page.route('**/api/v1/catalogue/languages', (route) => {
     languageAttempts += 1;
-    if (languageAttempts === 1) {
+    if (languageAttempts <= 2) {
       return route.fulfill({ status: 503, json: { detail: 'Catalogue offline.' } });
     }
     return route.fulfill({ json: languages });
@@ -60,5 +62,5 @@ test('a failed taxonomy load shows an error, disables selects, and retries', asy
   await dialog.getByRole('button', { name: 'Retry' }).click();
   await expect(dialog.getByText('Could not load boards, subjects, and languages.')).toHaveCount(0);
   await expect(dialog.locator('select#tour-reg-lang option', { hasText: 'Test Language' })).toHaveCount(1);
-  expect(languageAttempts).toBe(2);
+  expect(languageAttempts).toBe(3);
 });

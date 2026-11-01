@@ -68,15 +68,28 @@ export const DoubtQueuePage: React.FC = () => {
   );
 
   useEffect(() => {
-    const handleOnline = () => setIsOnline(true);
+    const handleOnline = () => {
+      setIsOnline(true);
+      void loadLocal();
+      void loadServer();
+    };
     const handleOffline = () => setIsOnline(false);
+    const handleFocus = () => {
+      if (navigator.onLine) {
+        void loadLocal();
+        void loadServer();
+      }
+    };
     window.addEventListener('online', handleOnline);
     window.addEventListener('offline', handleOffline);
+    window.addEventListener('focus', handleFocus);
     return () => {
       window.removeEventListener('online', handleOnline);
       window.removeEventListener('offline', handleOffline);
+      window.removeEventListener('focus', handleFocus);
     };
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.id]);
 
   const loadLocal = async () => {
     if (!user) {
@@ -168,6 +181,21 @@ export const DoubtQueuePage: React.FC = () => {
       (a, b) => new Date(b.submittedAt).getTime() - new Date(a.submittedAt).getTime()
     );
   }, [localDoubts, serverDoubts]);
+
+  // While unanswered rows exist, poll so sync results show up without a manual
+  // refresh — but only when the tab is visible and the device is online.
+  const hasUnanswered = rows.some((row) => row.status !== 'answered');
+  useEffect(() => {
+    if (!hasUnanswered) return;
+    const interval = window.setInterval(() => {
+      if (document.visibilityState === 'visible' && navigator.onLine) {
+        void loadLocal();
+        void loadServer();
+      }
+    }, 15000);
+    return () => window.clearInterval(interval);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hasUnanswered, user?.id]);
 
   const handleManualSync = async () => {
     await syncManager.syncPendingData();
@@ -317,11 +345,19 @@ export const DoubtQueuePage: React.FC = () => {
               {row.status === 'answered' && row.answer && (
                 <div className={styles.answer}>
                   <div className={styles.answerLabel}>
-                    {row.limitations === 'no_source_attached'
-                      ? 'No source attached'
-                      : 'Answer from your sources'}
+                    {row.limitations === 'general_knowledge'
+                      ? 'General knowledge — not from your sources'
+                      : row.limitations === 'no_source_attached'
+                        ? 'No source attached'
+                        : 'Answer from your sources'}
                   </div>
                   <p className={styles.answerText}>{row.answer}</p>
+                  {row.limitations === 'general_knowledge' && (
+                    <p className={styles.limitation}>
+                      This answer comes from general knowledge, not from your books. Add a source
+                      for page-cited answers.
+                    </p>
+                  )}
                   {row.limitations === 'no_source_attached' && (
                     <button
                       type="button"

@@ -28,6 +28,7 @@
 **/test-results/
 **/playwright-report/
 acceptance/*.pdf
+**/acceptance/*.pdf
 
 # Generated exports (diagram tool output)
 diagrams/

@@ -271,6 +271,22 @@
   border-color: var(--color-warning-border);
 }
 
+.answerGeneral {
+  background: var(--brand-subtle);
+  border-color: var(--brand-primary-soft, var(--border-subtle));
+}
+
+.answerTagGeneral {
+  color: var(--brand-primary);
+}
+
+.generalNote {
+  margin-top: 9px;
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--ink-muted);
+}
+
 .answerQueued {
   background: var(--color-info-subtle);
   border-color: var(--color-info-border);

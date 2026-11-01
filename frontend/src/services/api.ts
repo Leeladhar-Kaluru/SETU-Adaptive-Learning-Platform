@@ -578,6 +578,22 @@ export function authHeaders(): Record<string, string> {
   return token ? { Authorization: `Bearer ${token}` } : {};
 }
 
+const REQUEST_TIMEOUT_MS = 8000;
+const RETRYABLE_STATUSES = new Set([502, 503, 504]);
+
+async function fetchOnce(endpoint: string, options: RequestInit): Promise<Response> {
+  const controller = new AbortController();
+  const timeoutId = window.setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+  try {
+    return await fetch(`${API_BASE}${endpoint}`, {
+      ...options,
+      signal: controller.signal
+    });
+  } finally {
+    window.clearTimeout(timeoutId);
+  }
+}
+
 async function request<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
   const headers = {
     'Content-Type': 'application/json',
@@ -585,10 +601,22 @@ async function request<T>(endpoint: string, options: RequestInit = {}): Promise<
     ...(options.headers || {})
   };
 
-  const response = await fetch(`${API_BASE}${endpoint}`, {
-    ...options,
-    headers
-  });
+  let response: Response;
+  try {
+    response = await fetchOnce(endpoint, { ...options, headers });
+  } catch (firstError) {
+    try {
+      response = await fetchOnce(endpoint, { ...options, headers });
+    } catch {
+      throw firstError;
+    }
+  }
+
+  if (!response.ok && RETRYABLE_STATUSES.has(response.status)) {
+    const retried = await fetchOnce(endpoint, { ...options, headers });
+    if (retried.ok) return retried.json();
+    response = retried;
+  }
 
   if (!response.ok) {
     let errorDetail = response.statusText;
