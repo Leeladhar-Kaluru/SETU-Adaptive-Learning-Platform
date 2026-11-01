@@ -239,10 +239,52 @@ def build_study_plan(db: Session, owner_id: uuid.UUID) -> Dict[str, Any]:
         .order_by(StudyEvent.occurred_at.desc())
         .all()
     )
-    events_by_lesson: Dict[str, List[StudyEvent]] = {}
+    # StudyEvent.lesson_id is a free-form string: a PathLesson UUID or a lesson_key.
+    # Resolve every reference to the lesson UUID so reading evidence attaches to the plan.
+    def _normalized_ref(ref: str) -> str:
+        try:
+            return str(uuid.UUID(ref))
+        except (ValueError, TypeError):
+            return ref
+
+    ref_to_lesson: Dict[str, uuid.UUID] = {}
+    uuid_refs: List[uuid.UUID] = []
+    key_refs: List[str] = []
+    seen_refs: set[str] = set()
     for event in events:
-        if event.lesson_id:
-            events_by_lesson.setdefault(str(event.lesson_id), []).append(event)
+        if not event.lesson_id or event.lesson_id in seen_refs:
+            continue
+        seen_refs.add(event.lesson_id)
+        try:
+            uuid_refs.append(uuid.UUID(event.lesson_id))
+        except (ValueError, TypeError):
+            key_refs.append(event.lesson_id)
+    if uuid_refs:
+        for lesson in (
+            db.query(PathLesson)
+            .join(LearningPath, LearningPath.id == PathLesson.path_id)
+            .filter(PathLesson.id.in_(uuid_refs), LearningPath.owner_id == owner_id)
+            .all()
+        ):
+            ref_to_lesson[str(lesson.id)] = lesson.id
+    if key_refs:
+        for lesson in (
+            db.query(PathLesson)
+            .join(LearningPath, LearningPath.id == PathLesson.path_id)
+            .filter(
+                PathLesson.lesson_key.in_(key_refs),
+                LearningPath.owner_id == owner_id,
+            )
+            .all()
+        ):
+            ref_to_lesson[lesson.lesson_key] = lesson.id
+    events_by_lesson: Dict[uuid.UUID, List[StudyEvent]] = {}
+    for event in events:
+        if not event.lesson_id:
+            continue
+        resolved = ref_to_lesson.get(_normalized_ref(event.lesson_id))
+        if resolved is not None:
+            events_by_lesson.setdefault(resolved, []).append(event)
 
     all_tasks: List[Dict[str, Any]] = []
     books: List[Dict[str, Any]] = []
@@ -273,7 +315,7 @@ def build_study_plan(db: Session, owner_id: uuid.UUID) -> Dict[str, Any]:
                 if concept_id not in path_concepts:
                     path_concepts.append(concept_id)
             lesson_attempts = attempts_by_version.get(version.id, []) if version else []
-            lesson_events = events_by_lesson.get(str(lesson.id), [])
+            lesson_events = events_by_lesson.get(lesson.id, [])
             reading_events = [event for event in lesson_events if event.event_type == "reading"]
             reading_seconds = sum(event.seconds or 0 for event in reading_events)
             checkpoint_attempts = [row for row in lesson_attempts if row.attempt_kind == "checkpoint"]

@@ -15,7 +15,8 @@ class Settings(BaseSettings):
     # Supabase's session-mode pooler caps the whole project at 15 clients, so
     # each process must stay small. API gets 4+2, the worker is started with
     # POOL_SIZE=2 / MAX_OVERFLOW=1 via environment.
-    POOL_SIZE: int = 4
+    # Sized for Supabase's 15-client session pooler: API 2+2, worker 1+1.
+    POOL_SIZE: int = 2
     MAX_OVERFLOW: int = 2
     POOL_TIMEOUT: int = 30
     SUPABASE_URL: str = ""

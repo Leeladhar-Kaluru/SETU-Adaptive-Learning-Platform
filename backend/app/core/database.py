@@ -4,12 +4,12 @@ from sqlalchemy.orm import sessionmaker, Session
 from app.core.config import settings
 
 # Supabase's session-mode pooler caps the whole project at 15 clients. Each
-# process keeps a small pool (API 4+2, worker 2+1 via POOL_SIZE env) so the
+# process keeps a small pool (API 2+2, worker 1+1 via POOL_SIZE env) so the
 # API, the worker, and short-lived scripts never exhaust the shared cap.
 engine = create_engine(
     settings.DATABASE_URL,
     pool_pre_ping=True,
-    pool_recycle=300,
+    pool_recycle=60,
     pool_size=settings.POOL_SIZE,
     max_overflow=settings.MAX_OVERFLOW,
     pool_timeout=settings.POOL_TIMEOUT,

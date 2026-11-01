@@ -142,18 +142,14 @@ def summarize_student(db: Session, owner_id: uuid.UUID) -> dict:
     if readings:
         latest_reading = readings[-1]
         lesson = (
-            db.query(PathLesson)
-            .join(LearningPath, LearningPath.id == PathLesson.path_id)
-            .filter(
-                PathLesson.id == latest_reading.lesson_id,
-                LearningPath.status.in_(["active", "generating"]),
-            )
-            .first()
+            _resolve_lesson_ref(db, owner_id, str(latest_reading.lesson_id))
             if latest_reading.lesson_id
             else None
         )
         if lesson:
-            reading_title = lesson.title
+            path = db.query(LearningPath).filter(LearningPath.id == lesson.path_id).first()
+            if path and path.status in ("active", "generating"):
+                reading_title = lesson.title
 
     return {
         "minutesStudied": round(total_seconds / 60, 1),
@@ -175,10 +171,15 @@ def record_study_event(
     owner_id: uuid.UUID = Depends(get_current_user_id),
     db: Session = Depends(get_db),
 ):
+    lesson_id_value: Optional[str] = None
+    if req.lessonId:
+        # Clients may send a PathLesson UUID or a lesson_key; store the UUID when it resolves.
+        lesson = _resolve_lesson_ref(db, owner_id, req.lessonId)
+        lesson_id_value = str(lesson.id) if lesson else (req.lessonId or "")[:80] or None
     event = StudyEvent(
         owner_id=owner_id,
         path_id=_as_uuid(req.pathId),
-        lesson_id=(req.lessonId or "")[:80] or None,
+        lesson_id=lesson_id_value,
         lesson_title=(req.lessonTitle or "")[:200] or None,
         event_type=req.eventType,
         seconds=max(0, min(req.seconds, 60 * 180)),
@@ -215,25 +216,36 @@ def adaptive_study_plan(
     return build_study_plan(db, owner_id)
 
 
-def _owned_lesson(
-    db: Session, owner_id: uuid.UUID, lesson_id: str
-) -> tuple[PathLesson, LessonVersion]:
-    lesson = None
+def _resolve_lesson_ref(
+    db: Session, owner_id: uuid.UUID, lesson_ref: str
+) -> Optional[PathLesson]:
+    """Map a client lesson reference (UUID id or lesson_key) to a PathLesson."""
+    if not lesson_ref:
+        return None
     try:
-        lesson_uuid = uuid.UUID(lesson_id)
-        lesson = (
+        lesson_uuid = uuid.UUID(str(lesson_ref))
+        return (
             db.query(PathLesson)
             .join(LearningPath, LearningPath.id == PathLesson.path_id)
             .filter(PathLesson.id == lesson_uuid, LearningPath.owner_id == owner_id)
             .first()
         )
     except (ValueError, TypeError):
-        lesson = (
+        return (
             db.query(PathLesson)
             .join(LearningPath, LearningPath.id == PathLesson.path_id)
-            .filter(PathLesson.lesson_key == lesson_id, LearningPath.owner_id == owner_id)
+            .filter(
+                PathLesson.lesson_key == str(lesson_ref),
+                LearningPath.owner_id == owner_id,
+            )
             .first()
         )
+
+
+def _owned_lesson(
+    db: Session, owner_id: uuid.UUID, lesson_id: str
+) -> tuple[PathLesson, LessonVersion]:
+    lesson = _resolve_lesson_ref(db, owner_id, lesson_id)
     if not lesson:
         raise HTTPException(status_code=404, detail="Lesson not found")
     version = (

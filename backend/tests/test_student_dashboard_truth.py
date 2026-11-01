@@ -104,3 +104,48 @@ def test_study_summary_does_not_invent_a_pace_or_goal(client, db):
     assert summary["dailyGoalMinutes"] is None
     assert "25" not in summary["focus"]
     assert summary["minutesStudied"] == 0.0
+
+
+def _path_with_lesson(db, student_id, lesson_key="lesson_1", title="Cells"):
+    path = LearningPath(owner_id=student_id, grade=9, subject_id="subject-science", outline_json={"title": title})
+    db.add(path)
+    db.flush()
+    lesson = PathLesson(path_id=path.id, lesson_key=lesson_key, title=title, sequence=1, status="ready")
+    db.add(lesson)
+    db.commit()
+    return path, lesson
+
+
+def test_reading_event_with_lesson_key_resolves_in_summary_and_plan(client, db):
+    student_id = _student(db)
+    path, lesson = _path_with_lesson(db, student_id)
+    db.add(StudyEvent(
+        owner_id=student_id, path_id=path.id, lesson_id="lesson_1",
+        lesson_title="Cells", event_type="reading", seconds=180,
+    ))
+    db.commit()
+
+    summary_response = client.get("/api/v1/study/summary", headers=auth_headers(student_id))
+    assert summary_response.status_code == 200
+    assert summary_response.json()["readingTitle"] == "Cells"
+
+    plan = client.get("/api/v1/study/plan", headers=auth_headers(student_id)).json()
+    lesson_row = next(
+        row for path_row in plan["roadmap"] for row in path_row["lessons"]
+        if row["lessonId"] == str(lesson.id)
+    )
+    assert lesson_row["readingMinutes"] == 3.0
+    assert lesson_row["status"] == "in_progress"
+
+
+def test_record_study_event_normalizes_lesson_key_to_uuid(client, db):
+    student_id = _student(db)
+    path, lesson = _path_with_lesson(db, student_id)
+    response = client.post(
+        "/api/v1/study/events",
+        headers=auth_headers(student_id),
+        json={"eventType": "reading", "pathId": str(path.id), "lessonId": "lesson_1", "seconds": 60},
+    )
+    assert response.status_code == 200
+    event = db.query(StudyEvent).filter(StudyEvent.owner_id == student_id).first()
+    assert event.lesson_id == str(lesson.id)
