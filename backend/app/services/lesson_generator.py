@@ -29,9 +29,16 @@ _HEADING = re.compile(
     re.IGNORECASE,
 )
 _CHAPTER_MARKER = re.compile(
-    r"^(chapter|unit)\s*([0-9oOil|](?:[\s.]*[0-9oOil|]){0,2})?\s*([:.\-\u2013|])?\s*(.*)$",
+    r"^(chapter|unit)\s*([0-9oOilvxIVX](?:[\s.]*[0-9oOilvxIVX]){0,2})?\s*([:.\-\u2013|])?\s*(.*)$",
     re.IGNORECASE,
 )
+_ROMAN_NUMERALS = {
+    "i": 1, "ii": 2, "iii": 3, "iv": 4, "v": 5, "vi": 6, "vii": 7,
+    "viii": 8, "ix": 9, "x": 10, "xi": 11, "xii": 12, "xiii": 13,
+    "xiv": 14, "xv": 15, "xvi": 16, "xvii": 17, "xviii": 18, "xix": 19,
+    "xx": 20, "xxi": 21, "xxii": 22, "xxiii": 23, "xxiv": 24,
+}
+_MARKER_SCAN_DEPTH = 30
 _TITLE_CONNECTORS = {"and", "of", "the", "a", "an", "in", "on", "for", "to", "with", "or", "its"}
 _SENTENCE_STARTERS = {
     "in", "the", "this", "some", "looking", "as", "a", "an", "when", "where",
@@ -47,6 +54,21 @@ _SENTENCE_STOPWORDS = (
     " for example ", " let us ", " consider the ", " what happens ", " do we ",
     " can you ", " why do ", " how do ", " it is ", " there are ", " these are ",
 )
+
+# Page furniture that repeats on many pages but is never a chapter title.
+_NON_TITLE_HEADERS = {
+    "try these", "do this", "think discuss and write", "exercise", "exercises",
+    "let's work these out", "let us do", "activity", "activities", "glossary",
+    "answers", "answer key", "appendix", "worksheet", "index", "contents",
+    "note", "notes", "summary", "key points", "do you know",
+    "what have we discussed", "learning further", "keywords", "reprint",
+}
+_NON_TITLE_WORDS = {
+    "notes", "solution", "example", "exercise", "exercises", "activity",
+    "activities", "glossary", "summary", "appendix", "index", "fig", "figure",
+    "table", "step", "statement", "therefore", "chapter", "unit", "section",
+    "lesson", "answers", "answer", "note", "worksheet", "contents",
+}
 
 _VISUAL_TYPES = {
     "number_line", "fraction_model", "algebra_balance", "coordinate_grid",
@@ -124,11 +146,60 @@ class LessonGeneratorService:
             raise ValueError("This document has no extractable text to build a learning path.")
 
         page_by_number = {page["page_number"]: page for page in pages}
-        sections = self._running_header_sections(pages, page_by_number)
-        if len(sections) < 2:
-            marker_sections = self._chapter_marker_sections(pages, page_by_number)
-            if marker_sections:
-                sections = marker_sections
+        header_sections = self._running_header_sections(pages, page_by_number)
+        marker_sections = self._chapter_marker_sections(pages, page_by_number)
+        if marker_sections:
+            # Marker sections carry the full opening-page title, so they win ties
+            # over truncated running-header titles. Header runs that a chapter
+            # marker falls inside are spanning multiple chapters; runs wholly
+            # inside one marker-bounded range are redundant when they repeat the
+            # marker's title, and single-word or two-page runs inside a range
+            # are vertical-title art or section furniture, not chapters.
+            first_marker_start = min(m["pageStart"] for m in marker_sections)
+            marker_starts = sorted(m["pageStart"] for m in marker_sections)
+            marker_ranges = [
+                (
+                    marker_starts[i],
+                    (marker_starts[i + 1] - 1) if i + 1 < len(marker_starts)
+                    else (pages[-1]["page_number"] if pages else marker_starts[i]),
+                )
+                for i in range(len(marker_starts))
+            ]
+            marker_titles = [m.get("title") for m in marker_sections if m.get("title")]
+            kept_headers = []
+            for header in header_sections:
+                start = header["pageStart"]
+                end = max(header.get("pageEnd") or start, start)
+                if start < first_marker_start - 2:
+                    continue
+                if any(start <= marker_start < end for marker_start in marker_starts):
+                    continue
+                if marker_titles and any(
+                    self._similar_titles(header["title"], title)
+                    for title in marker_titles
+                ):
+                    continue
+                if header.get("pageCount", 99) < 2:
+                    # A title that repeats on a single page is vertical art on
+                    # an opener, not a running header.
+                    continue
+                if len((header.get("title") or "").split()) == 1 and any(
+                    range_start <= start and end <= range_end
+                    for range_start, range_end in marker_ranges
+                ):
+                    continue
+                if any(
+                    range_start <= start and end <= range_end
+                    for range_start, range_end in marker_ranges
+                ) and self._title_is_section_heading(
+                    page_by_number, start, end, header["title"]
+                ):
+                    # A numbered section heading ("3.3 Loans from
+                    # Cooperatives") repeated as a page header is not a chapter.
+                    continue
+                kept_headers.append(header)
+            header_sections = kept_headers
+        sections = marker_sections + header_sections
         if len(sections) < 2:
             heading_sections = self._section_heading_sections(pages)
             if heading_sections:
@@ -167,22 +238,114 @@ class LessonGeneratorService:
         pages: List[Dict[str, Any]],
         page_by_number: Dict[int, Dict[str, Any]],
     ) -> List[Dict[str, Any]]:
-        """Detect chapters from a repeated header label and changing title."""
+        """Detect chapters from repeated page-header lines.
+
+        Two textbook conventions are handled:
+
+        1. The chapter title itself is the header, printed on alternate pages
+           with the page number glued on ("RATIONAL NUMBERS  3") and the book
+           label on the other pages ("3 / MATHEMATICS").
+        2. A constant book label is followed by a changing title line.
+
+        Repeated furniture ("TRY THESE", "DO THIS") is never a title.
+        """
+        if len(pages) < 4:
+            return []
+
+        def _is_furniture(title: str) -> bool:
+            lower = (title or "").lower().strip()
+            if not lower:
+                return True
+            # Punctuation-normalised so "Think, Discuss and Write" matches the
+            # furniture phrase "think discuss and write".
+            normalised = re.sub(r"[^a-z0-9 ]+", " ", lower)
+            normalised = re.sub(r"\s+", " ", normalised).strip()
+            if any(
+                normalised == bad or normalised.startswith(bad + " ")
+                for bad in _NON_TITLE_HEADERS
+            ):
+                return True
+            if len(re.findall(r"\d", lower)) >= 4:
+                # Year/edition stamps like "Reprint2024-25" are furniture.
+                return True
+            return any(word in _NON_TITLE_WORDS for word in lower.split())
+
+        def _candidates(text: str) -> List[str]:
+            out: List[str] = []
+            for raw in self._page_lines(text)[:3]:
+                if raw.isdigit():
+                    continue
+                cleaned = self._clean_title_fragment(raw)
+                if not cleaned or len(cleaned) < 3 or len(cleaned) > 60:
+                    continue
+                if len(re.findall(r"[A-Za-z]", cleaned)) < 4:
+                    continue
+                if "|" in cleaned:
+                    continue
+                if _is_furniture(cleaned):
+                    continue
+                out.append(cleaned)
+            return out
+
         counter: Counter = Counter()
         for page in pages:
-            for line in self._page_lines(page["text"])[:8]:
-                if (
-                    3 <= len(line) <= 40
-                    and re.search(r"[A-Za-z]", line)
-                    and not line.isdigit()
-                ):
-                    counter[line] += 1
+            for cand in _candidates(page["text"]):
+                counter[cand] += 1
         if not counter:
             return []
 
-        label, count = counter.most_common(1)[0]
-        if count < max(4, int(len(pages) * 0.15)):
-            return []
+        label, label_count = counter.most_common(1)[0]
+        if label_count < max(4, int(len(pages) * 0.15)):
+            label = None
+
+        per_page: Dict[int, Optional[str]] = {}
+        for page in pages:
+            page_cands = _candidates(page["text"])
+            header: Optional[str] = None
+            for cand in page_cands:
+                if label and cand == label:
+                    continue
+                if counter[cand] < 2:
+                    continue
+                if _is_furniture(cand):
+                    continue
+                if not self._is_title_like(cand):
+                    continue
+                header = cand
+                break
+            if header is None and label:
+                follower = self._header_title(page["text"], label)
+                if (
+                    follower
+                    and counter.get(follower, 0) >= 2
+                    and self._is_title_like(follower)
+                    and not _is_furniture(follower)
+                ):
+                    header = follower
+            per_page[page["page_number"]] = header
+
+        runs: List[Dict[str, Any]] = []
+        current: Optional[Dict[str, Any]] = None
+        for page in pages:
+            header = per_page.get(page["page_number"])
+            if header is None:
+                if current is not None:
+                    current["lastHeader"] = page["page_number"]
+                continue
+            if current is None or not self._similar_titles(current["title"], header):
+                if current is not None:
+                    runs.append(current)
+                current = {
+                    "title": header,
+                    "firstHeader": page["page_number"],
+                    "lastHeader": page["page_number"],
+                    "pageCount": 1,
+                }
+            else:
+                current["lastHeader"] = page["page_number"]
+                current["pageCount"] = current.get("pageCount", 1) + 1
+        if current is not None:
+            runs.append(current)
 
         first_chapter_page: Optional[int] = None
         for page in pages:
@@ -190,62 +353,53 @@ class LessonGeneratorService:
             if marker and marker.get("number") is not None:
                 first_chapter_page = page["page_number"]
                 break
-
-        headers: List[tuple] = []
-        for page in pages:
-            header_title = self._header_title(page["text"], label)
-            if header_title:
-                headers.append((page["page_number"], header_title))
-        if len(headers) < 2:
-            return []
-
-        runs: List[Dict[str, Any]] = []
-        for page_number, header_title in headers:
-            if runs and self._similar_titles(runs[-1]["title"], header_title):
-                runs[-1]["lastHeader"] = page_number
-                continue
-            runs.append({
-                "title": header_title,
-                "firstHeader": page_number,
-                "lastHeader": page_number,
-            })
-        if len(runs) < 2:
-            return []
-
         if first_chapter_page is not None:
-            # Front matter also carries the book label ("Class X", "SOCIAL
-            # STUDIES"); only running headers at or after the first numbered
-            # chapter belong to the course outline.
+            # Front matter also carries the book label; only headers at or
+            # after the first numbered chapter belong to the course outline.
             runs = [run for run in runs if run["lastHeader"] >= first_chapter_page]
-        # A one-page run is usually a cover, contents page, or OCR noise.
+        runs = [run for run in runs if not _is_furniture(run["title"])]
         runs = [run for run in runs if run["lastHeader"] > run["firstHeader"]]
         if len(runs) < 2:
             return []
 
         sections: List[Dict[str, Any]] = []
-        for run in runs:
+        for index, run in enumerate(runs):
+            chapter_number = index + 1
             start = max(1, run["firstHeader"] - 1)
             title = run["title"]
+            chosen: Optional[int] = None
             for candidate in range(max(1, run["firstHeader"] - 3), run["firstHeader"] + 2):
                 page = page_by_number.get(candidate)
                 if not page:
                     continue
-                marker = self._marker_line(page["text"])
-                if not marker:
-                    continue
-                start = candidate
-                marker_title = self._title_from_marker_page(page["text"])
+                if self._section_heading_number(page["text"]) == chapter_number:
+                    chosen = candidate
+                    break
+            if chosen is None:
+                for candidate in range(max(1, run["firstHeader"] - 3), run["firstHeader"] + 2):
+                    page = page_by_number.get(candidate)
+                    if not page:
+                        continue
+                    if self._marker_line(page["text"]):
+                        chosen = candidate
+                        break
+            if chosen is not None:
+                start = chosen
+                marker_title = self._title_from_marker_page(page_by_number[chosen]["text"])
                 if marker_title and self._similar_titles(title, marker_title):
                     # The chapter-opening page usually spells the title more
                     # completely than a running header ("Food Securty").
                     title = marker_title
-                break
             if sections and start <= sections[-1]["pageStart"]:
                 start = sections[-1]["pageStart"] + 1
             sections.append({
                 "title": title,
                 "pageStart": start,
-                "pageEnd": start,
+                # lastHeader lets the outline builder cut runs that chapter
+                # markers prove are spanning multiple chapters.
+                "pageEnd": run["lastHeader"],
+                "pageCount": run.get("pageCount", 99),
+                "source": "header",
             })
         return sections
 
@@ -282,9 +436,29 @@ class LessonGeneratorService:
             marker = self._marker_line(page["text"])
             if not marker:
                 continue
+            marker_lines = [
+                line
+                for line in self._page_lines(page["text"])[:_MARKER_SCAN_DEPTH]
+                if self._marker_line(line)
+            ]
+            if len(marker_lines) >= 3:
+                # A contents page lists every chapter; it is not a chapter start.
+                continue
             marker_title = self._title_from_marker_page(page["text"])
             if page_span >= 20 and page["page_number"] >= last_page_number - 2:
                 # End-of-book answer keys repeat chapter headings.
+                continue
+            if not marker.get("rest") and marker.get("number") is None:
+                # A bare "Chapter" label with no number nearby is ambiguous
+                # (story text, figure art); running headers cover those books.
+                continue
+            if (
+                not marker.get("rest")
+                and not marker_title
+                and marker.get("line_index", 99) > 3
+            ):
+                # Title art glued deep in a page is a figure, not an opener;
+                # a real opener keeps its label near the top of the page.
                 continue
             if not marker_title and marker.get("number") is None:
                 continue
@@ -305,10 +479,17 @@ class LessonGeneratorService:
             title = marker["title"] or self._fallback_title(pages, marker["page_number"], end)
             if not title:
                 continue
+            start = marker["page_number"]
+            marker_text = (page_by_number.get(start) or {}).get("text") or ""
+            if re.search(r"notes for", marker_text, re.IGNORECASE):
+                # NCERT chapter PDFs open with a "Notes for the Teacher" page;
+                # the chapter itself starts on the next page.
+                start += 1
             sections.append({
                 "title": title,
-                "pageStart": marker["page_number"],
+                "pageStart": start,
                 "pageEnd": marker["page_number"],
+                "source": "marker",
             })
         return sections
 
@@ -331,6 +512,7 @@ class LessonGeneratorService:
                     "title": title,
                     "pageStart": page["page_number"],
                     "pageEnd": page["page_number"],
+                    "source": "heading",
                 })
                 break
         return sections
@@ -351,9 +533,40 @@ class LessonGeneratorService:
                 "title": (section.get("title") or "").strip(),
                 "pageStart": start,
                 "pageEnd": start,
+                "source": section.get("source") or "unknown",
             })
         if not cleaned:
             return []
+
+        # Merge adjacent sections that are the same chapter split across two
+        # header runs (or a marker title plus its truncated running header).
+        # Two distinct marker sections never merge: each CHAPTER marker is its
+        # own chapter even when titles look alike (e.g. "Science Unit 1/2/3").
+        merged: List[Dict[str, Any]] = []
+        for section in cleaned:
+            previous_is_marker = merged and merged[-1].get("source") == "marker"
+            current_is_marker = section.get("source") == "marker"
+            if (
+                merged
+                and self._mergeable_titles(merged[-1]["title"], section["title"])
+                and not (previous_is_marker and current_is_marker)
+            ):
+                previous = merged[-1]
+                previous_title = previous["title"]
+                current_title = section["title"]
+                merged[-1] = {
+                    "title": (
+                        previous_title
+                        if len(previous_title.split()) >= len(current_title.split())
+                        else current_title
+                    ),
+                    "pageStart": min(previous["pageStart"], section["pageStart"]),
+                    "pageEnd": section["pageStart"],
+                    "source": previous.get("source") or section.get("source") or "unknown",
+                }
+                continue
+            merged.append(section)
+        cleaned = merged
 
         if len(cleaned) > 24:
             step = len(cleaned) / 24
@@ -379,7 +592,8 @@ class LessonGeneratorService:
     # ------------------------------------------------------------------
 
     def _marker_line(self, text: str) -> Optional[Dict[str, Any]]:
-        for line in self._page_lines(text)[:12]:
+        lines = self._page_lines(text)[:_MARKER_SCAN_DEPTH]
+        for index, line in enumerate(lines):
             match = _CHAPTER_MARKER.match(line.strip())
             if not match:
                 continue
@@ -388,6 +602,25 @@ class LessonGeneratorService:
             if rest and not separator and not raw_number:
                 # "chapter that should be considered ..." is body text.
                 continue
+            if rest and not separator and not any(ch.isdigit() for ch in raw_number or ""):
+                # "chapter iv" followed directly by prose is not a marker.
+                continue
+            number = None
+            if raw_number:
+                digits = re.findall(r"\d+", raw_number)
+                if digits:
+                    number = int("".join(digits))
+                else:
+                    number = _ROMAN_NUMERALS.get(raw_number.replace(" ", "").lower())
+            glued = bool(raw_number) and (match.start(2) == 0 or not line[match.start(2) - 1].isspace())
+            if glued and index > 8:
+                # Glued "CHAPTER3" labels deep in a page are figure art
+                # (inside exercises and covers), never chapter openers.
+                continue
+            if not rest and separator and number is None:
+                # A sentence wrapping onto a line of its own ("...in this
+                # chapter.") is body text, not a chapter opener.
+                continue
             if len(rest.split()) > 14:
                 cleaned_rest = self._clean_title_fragment(rest)
                 if not cleaned_rest or len(cleaned_rest.split()) > 14:
@@ -395,28 +628,83 @@ class LessonGeneratorService:
                 rest = cleaned_rest
             if rest and not self._looks_like_title_fragment(rest):
                 continue
-            number = None
-            if raw_number:
-                digits = re.findall(r"\d+", raw_number)
-                if digits:
-                    number = int("".join(digits))
-            return {"number": number, "separator": separator, "rest": rest}
+            if number is None and not rest and index > 0:
+                # NCERT openers print the chapter number on its own line just
+                # above a bare "Chapter" label ("4" / "Chapter").
+                previous = lines[index - 1].strip()
+                if previous.isdigit() and len(previous) <= 3:
+                    number = int(previous)
+            if number is None and not rest and index + 1 < len(lines):
+                # Some title art prints it below ("CHAPTER" / "13").
+                following = lines[index + 1].strip()
+                if following.isdigit() and len(following) <= 3:
+                    number = int(following)
+            return {
+                "number": number,
+                "separator": separator,
+                "rest": rest,
+                "line_index": index,
+                "glued": glued,
+            }
+        return None
+
+    def _section_heading_number(self, text: str) -> Optional[int]:
+        for raw in text.splitlines():
+            match = _SECTION_HEADING.match(raw.strip())
+            if not match:
+                continue
+            digits = re.findall(r"\d+", match.group(1))
+            if digits:
+                return int(digits[0])
         return None
 
     def _title_from_marker_page(self, text: str) -> Optional[str]:
         lines = self._page_lines(text)
         marker_index = None
         marker = None
-        for index, line in enumerate(lines[:18]):
-            if self._marker_line(line):
+        for index, line in enumerate(lines[:_MARKER_SCAN_DEPTH]):
+            found = self._marker_line(line)
+            if found and found.get("glued") and index > 8:
+                continue
+            if found:
                 marker_index = index
-                marker = self._marker_line(line)
+                marker = found
                 break
         if marker is None or marker_index is None:
             return None
 
-        fragments: List[str] = []
         rest = marker.get("rest") or ""
+        number = marker.get("number")
+
+        if not rest and (number is None or not marker.get("glued")):
+            # A bare "Chapter" label sits BELOW the real title in NCERT books
+            # ("Mindful Eating: A Path to a Healthy Body" / "3" / "Chapter").
+            # The number may have been attached from the line above the label.
+            # Story-first openers put body prose ABOVE the title — stop the
+            # upward walk at the first body line once a fragment is collected.
+            # Glued labels ("CHAPTER1") are the opposite convention: the title
+            # follows the label, so they take the fragments path below.
+            above: List[str] = []
+            for line in reversed(lines[:marker_index]):
+                if self._is_noise(line):
+                    if not above:
+                        continue
+                    break
+                cleaned = self._clean_title_fragment(line)
+                if not cleaned or self._is_body_line(line, has_fragments=bool(above)):
+                    if not above:
+                        continue
+                    break
+                above.insert(0, cleaned)
+                if len(above) >= 4:
+                    break
+            if above:
+                title = self._merge_fragments(above)
+                if self._is_title_like(title):
+                    return title
+            return None
+
+        fragments: List[str] = []
         if rest and not rest.isdigit():
             cleaned = self._clean_title_fragment(rest)
             if cleaned:
@@ -430,15 +718,25 @@ class LessonGeneratorService:
                 continue
             if self._is_body_line(line, has_fragments=bool(fragments)):
                 break
+            words = cleaned.split()
             if fragments:
-                first_word = cleaned.split()[0].lower() if cleaned.split() else ""
-                words = cleaned.split()
+                first_word = words[0].lower() if words else ""
                 if first_word in _TITLE_CONNECTORS:
                     if len(words) > 4 or any(char in cleaned for char in ",;") or cleaned.endswith("-"):
                         break
                 elif first_word in _SENTENCE_STARTERS:
                     break
                 elif len(words) > 6:
+                    break
+                lower = f" {cleaned.lower()} "
+                if any(token in lower for token in (
+                    " has ", " have ", " is ", " are ", " was ", " were ",
+                    " this ", " that ", " these ", " those ", " many ", " some ",
+                )):
+                    # A complete title is followed by body prose, not verbs.
+                    break
+            else:
+                if len(words) > 8:
                     break
             fragments.append(cleaned)
             if sum(len(fragment.split()) for fragment in fragments) >= 14:
@@ -522,6 +820,10 @@ class LessonGeneratorService:
         text = " ".join(fragment for fragment in fragments if fragment)
         text = re.sub(r"\b([A-Z][a-z]{2,})\s+[A-Z]\s+\1\b", r"\1", text)
         text = re.sub(r"\b(\w+)\s+\1\b", r"\1", text, flags=re.IGNORECASE)
+        words = text.split()
+        if words and len(words) % 2 == 0 and words[: len(words) // 2] == words[len(words) // 2 :]:
+            # "Consumer Rights Consumer Rights" — an art line repeated the title.
+            text = " ".join(words[: len(words) // 2])
         return re.sub(r"\s+", " ", text).strip(" ,;:-")
 
     def _is_noise(self, line: str) -> bool:
@@ -549,6 +851,10 @@ class LessonGeneratorService:
         compact = " ".join((line or "").split())
         words = compact.split()
         if len(compact) > 130:
+            return True
+        if compact[:1].islower() and "," in compact:
+            # "to the school by the science teacher, Madam Sulekha, to" is
+            # story prose, never a title fragment.
             return True
         lower = f" {compact.lower()} "
         if any(stopword in lower for stopword in _SENTENCE_STOPWORDS):
@@ -579,12 +885,56 @@ class LessonGeneratorService:
             return False
         return True
 
+    def _mergeable_titles(self, first: str, second: str) -> bool:
+        """True when two adjacent outline entries are the same chapter.
+
+        Requires more than trivial overlap so distinct chapters like
+        "Motion" and "Motion and Time" never collapse into one.
+        """
+        left = re.sub(r"[^a-z0-9 ]", "", (first or "").lower())
+        right = re.sub(r"[^a-z0-9 ]", "", (second or "").lower())
+        if not left or not right:
+            return False
+        if left == right:
+            return True
+        shorter, longer = (left, right) if len(left) < len(right) else (right, left)
+        return len(shorter.split()) >= 2 and shorter in longer
+
+    def _title_is_section_heading(
+        self,
+        page_by_number: Dict[int, Dict[str, Any]],
+        start: int,
+        end: int,
+        title: str,
+    ) -> bool:
+        """True when the given title is a numbered section heading
+        ("3.3 Loans from Cooperatives") inside the page range."""
+        key = re.sub(r"[^a-z0-9 ]", "", (title or "").lower()).strip()
+        if not key:
+            return False
+        for page_number in range(start, end + 1):
+            page = page_by_number.get(page_number)
+            if not page:
+                continue
+            for line in self._page_lines(page["text"])[:30]:
+                match = _SECTION_HEADING.match(line)
+                if not match:
+                    continue
+                heading = self._clean_title_fragment(match.group(2))
+                if heading and re.sub(r"[^a-z0-9 ]", "", heading.lower()).strip() == key:
+                    return True
+        return False
+
     def _similar_titles(self, first: str, second: str) -> bool:
         left = re.sub(r"[^a-z0-9 ]", "", (first or "").lower())
         right = re.sub(r"[^a-z0-9 ]", "", (second or "").lower())
         if not left or not right:
             return False
         if left == right:
+            return True
+        if left.startswith(right) or right.startswith(left):
+            # A running header is often a truncated chapter title
+            # ("Mindful Eating: A Path" vs the full opening-page title).
             return True
         left_tokens = left.split()
         right_tokens = right.split()

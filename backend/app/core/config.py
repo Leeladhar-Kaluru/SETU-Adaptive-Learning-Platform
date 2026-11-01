@@ -20,7 +20,7 @@ class Settings(BaseSettings):
     STORAGE_BACKEND: str = "supabase"  # "supabase" or "local" (local is refused outside local/test)
     LOCAL_STORAGE_DIR: str = "local_storage"
     STORAGE_BUCKET_DOCUMENTS: str = "setu-documents"
-    MAX_UPLOAD_SIZE_BYTES: int = 50 * 1024 * 1024  # 50 MB
+    MAX_UPLOAD_SIZE_BYTES: int = 100 * 1024 * 1024  # 100 MB — full textbooks exceed 50 MB
     ALLOWED_EXTENSIONS: List[str] = ["pdf", "docx", "pptx", "txt", "md", "jpg", "jpeg", "png"]
     
     # AI and Embeddings configuration

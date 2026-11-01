@@ -50,12 +50,14 @@ async def test_provider_failure_is_retryable_then_answered(db, monkeypatch):
     assert second["status"] == "answered"
     assert second["alreadyExisted"] is True
     assert "basic unit" in second["answerJson"]["answer"]
-    assert len(second["answerJson"]["citations"]) == 1
+    assert second["answerJson"]["limitations"] == "general_knowledge"
+    assert second["answerJson"]["citations"] == []
 
 
 @pytest.mark.asyncio
-async def test_insufficient_evidence_is_answered_without_citations(db, monkeypatch):
+async def test_insufficient_evidence_is_refused_without_calling_provider(db, monkeypatch):
     from app.models.documents import Document, DocumentChunk
+    from app.models.learning import LearningPath
 
     owner_id = uuid.uuid4()
     doc = Document(
@@ -71,11 +73,17 @@ async def test_insufficient_evidence_is_answered_without_citations(db, monkeypat
             text_hash="insufficient-evidence-chunk",
         )
     )
+    path = LearningPath(
+        owner_id=owner_id, document_id=doc.id, grade=9, subject_id="subject-science",
+        status="active", outline_json={"chapters": []},
+    )
+    db.add(path)
     db.commit()
 
-    called = {"provider": 0}
+    called = {"provider": 0, "search": 0}
 
     async def fake_search(**kwargs):
+        called["search"] += 1
         return {"results": [], "insufficient_evidence": True}
 
     async def fake_chat(**kwargs):
@@ -87,13 +95,48 @@ async def test_insufficient_evidence_is_answered_without_citations(db, monkeypat
 
     result = await sync_service.sync_doubt(
         db=db, owner_id=owner_id, client_doubt_id="doubt-2",
-        question_text="What is photosynthesis?",
+        question_text="What is photosynthesis?", path_id=path.id,
     )
     assert result["status"] == "answered"
     assert result["answerJson"]["citations"] == []
     assert result["answerJson"]["limitations"] == "insufficient_source_evidence"
     assert "does not contain enough evidence" in result["answerJson"]["answer"]
     assert called["provider"] == 0
+    assert called["search"] == 1
+
+
+@pytest.mark.asyncio
+async def test_general_question_with_library_but_no_path_never_consults_retrieval(db, monkeypatch):
+    from app.models.documents import Document
+
+    owner_id = uuid.uuid4()
+    db.add(Document(
+        owner_id=owner_id, original_filename="science.pdf", storage_key="documents/science.pdf",
+        mime_type="application/pdf", size_bytes=100, status="ready",
+    ))
+    db.commit()
+
+    called = {"search": 0}
+
+    async def fake_search(**kwargs):
+        called["search"] += 1
+        return _evidence()
+
+    async def fake_chat(**kwargs):
+        return "Photosynthesis converts light energy into chemical energy."
+
+    monkeypatch.setattr(sync_module.retrieval_service, "hybrid_search", fake_search)
+    monkeypatch.setattr(sync_module.ai_provider, "generate_chat", fake_chat)
+
+    result = await sync_service.sync_doubt(
+        db=db, owner_id=owner_id, client_doubt_id="doubt-general-library",
+        question_text="What is photosynthesis?",
+    )
+    assert result["status"] == "answered"
+    assert result["answerJson"]["limitations"] == "general_knowledge"
+    assert result["answerJson"]["citations"] == []
+    assert "light energy" in result["answerJson"]["answer"]
+    assert called["search"] == 0
 
 
 @pytest.mark.asyncio

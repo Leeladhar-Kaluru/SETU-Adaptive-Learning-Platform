@@ -65,6 +65,12 @@ class ExtractionService:
 
         for page in pages:
             text = (page.get("text") or "").replace("\x00", "")
+            # Decorative title fonts (e.g. NCERT chapter headers) sometimes encode
+            # Latin letters in the Private Use Area: U+F04C == 'L'. Map them back.
+            text = "".join(
+                chr(ord(ch) - 0xF000) if 0xF000 <= ord(ch) <= 0xF0FF else ch
+                for ch in text
+            )
             page["text"] = text
             page["char_count"] = len(text)
             page["word_count"] = len(text.split()) if text else 0

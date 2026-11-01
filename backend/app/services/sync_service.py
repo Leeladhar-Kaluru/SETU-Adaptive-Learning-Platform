@@ -3,7 +3,7 @@ import uuid
 import datetime
 from typing import Dict, Any, List, Optional
 from sqlalchemy.orm import Session
-from app.models.documents import Document, DocumentChunk
+from app.models.documents import Document
 from app.models.doubts import Doubt
 from app.models.learning import LearningPath
 from app.models.profiles import UserProfile
@@ -114,8 +114,9 @@ class SyncService:
 
         try:
             # Scope grounding to the document behind the lesson the student is
-            # reading. Falling back to the owner's whole library could cite a
-            # different book than the one on screen.
+            # reading. A question without a lesson context has no book attached,
+            # so it takes the labeled general-knowledge path instead of pulling
+            # weak citations from an unrelated book in the library.
             document_id = None
             if path_id:
                 path = db.query(LearningPath).filter(
@@ -124,6 +125,49 @@ class SyncService:
                 ).first()
                 if path and path.document_id:
                     document_id = path.document_id
+
+            reply_language = _student_language(db, owner_id)
+
+            if not path_id or not document_id:
+                # Hybrid chat: without a book attached to this question the
+                # tutor still helps, but the answer is general knowledge and is
+                # always labeled as such — never presented as page-grounded.
+                general_prompt = (
+                    "You are the SETU Academic Tutor for a school student.\n"
+                    "Answer in at most 120 words, in plain language, without a greeting.\n"
+                    "The student has not attached any book, so answer from general "
+                    "knowledge and never invent a page reference or citation.\n"
+                    f"Reply in the student's preferred language (language code: {reply_language}).\n"
+                    f"Student Question: {question_text}\n"
+                )
+                llm_answer = await ai_provider.generate_chat(
+                    messages=[{"role": "user", "content": general_prompt}],
+                    temperature=0.3,
+                    max_tokens=900,
+                    require_complete=True,
+                )
+                if not llm_answer or not str(llm_answer).strip():
+                    raise RuntimeError("empty tutor response")
+                answer_payload = {
+                    "answer": llm_answer,
+                    "citations": [],
+                    "limitations": "general_knowledge",
+                    "answeredAt": datetime.datetime.utcnow().isoformat(),
+                }
+                doubt.status = "answered"
+                doubt.last_error_code = None
+                doubt.answer_json = answer_payload
+                doubt.answered_at = datetime.datetime.utcnow()
+                db.commit()
+                db.refresh(doubt)
+                return {
+                    "id": str(doubt.id),
+                    "clientDoubtId": doubt.client_doubt_id,
+                    "status": doubt.status,
+                    "questionText": doubt.question_text,
+                    "answerJson": doubt.answer_json,
+                    "alreadyExisted": already_existed,
+                }
 
             retrieval = await retrieval_service.hybrid_search(
                 db=db,
@@ -175,50 +219,12 @@ class SyncService:
             ]
 
             if retrieval.get("insufficient_evidence") or not results:
-                has_source = (
-                    db.query(DocumentChunk.id)
-                    .join(Document, Document.id == DocumentChunk.document_id)
-                    .filter(
-                        Document.owner_id == owner_id,
-                        Document.deleted_at.is_(None),
-                    )
-                    .first()
-                    is not None
-                )
-                reply_language = _student_language(db, owner_id)
-                if not has_source:
-                    # Hybrid chat: without any uploaded book the tutor still
-                    # helps, but the answer is general knowledge and is always
-                    # labeled as such — never presented as page-grounded.
-                    general_prompt = (
-                        "You are the SETU Academic Tutor for a school student.\n"
-                        "Answer in at most 120 words, in plain language, without a greeting.\n"
-                        "The student has not attached any book, so answer from general "
-                        "knowledge and never invent a page reference or citation.\n"
-                        f"Reply in the student's preferred language (language code: {reply_language}).\n"
-                        f"Student Question: {question_text}\n"
-                    )
-                    llm_answer = await ai_provider.generate_chat(
-                        messages=[{"role": "user", "content": general_prompt}],
-                        temperature=0.3,
-                        max_tokens=900,
-                        require_complete=True,
-                    )
-                    if not llm_answer or not str(llm_answer).strip():
-                        raise RuntimeError("empty tutor response")
-                    answer_payload = {
-                        "answer": llm_answer,
-                        "citations": [],
-                        "limitations": "general_knowledge",
-                        "answeredAt": datetime.datetime.utcnow().isoformat(),
-                    }
-                else:
-                    answer_payload = {
-                        "answer": "The selected document does not contain enough evidence to answer this question accurately. Please review the relevant part of your source or consult your teacher.",
-                        "citations": [],
-                        "limitations": "insufficient_source_evidence",
-                        "answeredAt": datetime.datetime.utcnow().isoformat()
-                    }
+                answer_payload = {
+                    "answer": "The selected document does not contain enough evidence to answer this question accurately. Please review the relevant part of your source or consult your teacher.",
+                    "citations": [],
+                    "limitations": "insufficient_source_evidence",
+                    "answeredAt": datetime.datetime.utcnow().isoformat()
+                }
             else:
                 reply_language = _student_language(db, owner_id)
                 prompt = (
