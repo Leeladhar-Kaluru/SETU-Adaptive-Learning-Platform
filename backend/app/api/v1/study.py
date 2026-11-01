@@ -333,3 +333,30 @@ def respond_to_recommendation(
     action.reason_json = reason
     db.commit()
     return {"id": str(action.id), "status": action.status}
+
+
+@router.get("/coach-note/{concept_id}")
+def coach_note(
+    concept_id: str,
+    owner_id: uuid.UUID = Depends(get_current_user_id),
+    db: Session = Depends(get_db),
+):
+    from app.models.learning import CoachNote
+    from app.services.coach_notes import latest_ready_note
+
+    note = latest_ready_note(db, owner_id=owner_id, concept_id=concept_id)
+    if note is not None:
+        return {"status": "ready", "note": note}
+    pending = (
+        db.query(CoachNote)
+        .filter(
+            CoachNote.owner_id == owner_id,
+            CoachNote.concept_id == concept_id,
+            CoachNote.status.in_(["queued", "claimed"]),
+        )
+        .first()
+    )
+    if pending is not None:
+        return {"status": "pending", "note": None}
+    return {"status": "none", "note": None}
+    return {"id": str(action.id), "status": action.status}

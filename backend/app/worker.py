@@ -14,6 +14,7 @@ from app.core.database import SessionLocal
 from app.models.jobs import GenerationJob
 from app.models.learning import PathLesson, LessonVersion, LearningPath
 from app.models.documents import Document, DocumentChunk
+from app.services.coach_notes import claim_next_coach_note, process_coach_note
 from app.services.ingestion import process_claimed_document
 from app.services.lesson_generator import lesson_generator_service
 
@@ -285,7 +286,12 @@ async def run_worker_loop(poll_interval: float = 2.0, max_cycles: Optional[int] 
                 if job:
                     await process_job(db, job)
                 else:
-                    await asyncio.sleep(poll_interval)
+                    coach_note = claim_next_coach_note(db, WORKER_ID)
+                    if coach_note:
+                        print(f"[{WORKER_ID}] Analyzing attempts for coach note {coach_note.id}")
+                        await process_coach_note(db, coach_note)
+                    else:
+                        await asyncio.sleep(poll_interval)
         except Exception as e:
             print(f"Worker loop error: {e}")
             await asyncio.sleep(poll_interval)

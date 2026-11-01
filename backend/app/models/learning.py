@@ -119,3 +119,22 @@ class StudyEvent(Base):
     score = Column(Float, nullable=True)
     occurred_at = Column(DateTime, default=datetime.datetime.utcnow, index=True)
 
+
+class CoachNote(Base):
+    """Queued LLM analysis of a student's real attempts for one concept."""
+
+    __tablename__ = "coach_notes"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    owner_id = Column(UUID(as_uuid=True), nullable=False, index=True)
+    concept_id = Column(String(100), nullable=False, index=True)
+    status = Column(String(50), default="queued")  # queued, claimed, ready, failed
+    request_json = Column(JSON, nullable=False)
+    content_json = Column(JSON, nullable=True)
+    lease_owner = Column(String(100), nullable=True)
+    lease_expires_at = Column(DateTime, nullable=True)
+    attempt_count = Column(Integer, nullable=False, default=0)
+    safe_error_message = Column(String(300), nullable=True)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+    completed_at = Column(DateTime, nullable=True)
+

@@ -43,6 +43,7 @@ class AttemptOutcome:
     mastery: dict
     next_action: dict
     already_recorded: bool
+    concept_ids: list
     coaching: Optional[dict] = None
 
 
@@ -241,6 +242,7 @@ def grade_and_record_attempt(
                 mastery=mastery,
                 next_action=adaptive_engine.determine_next_action(mastery),
                 already_recorded=True,
+                concept_ids=concept_ids,
             )
 
     is_correct, score, feedback, correct_answer = grade_response(question, response)
@@ -373,5 +375,6 @@ def grade_and_record_attempt(
         mastery=mastery,
         next_action=next_action,
         already_recorded=False,
+        concept_ids=concept_ids,
         coaching=coaching,
     )

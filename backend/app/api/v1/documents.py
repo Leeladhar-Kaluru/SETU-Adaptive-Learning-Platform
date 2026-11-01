@@ -286,9 +286,28 @@ async def delete_document(
     owner_id: uuid.UUID = Depends(get_current_user_id),
     db: Session = Depends(get_db),
 ):
+    from app.models.doubts import Doubt
+    from app.models.jobs import GenerationJob
+    from app.models.learning import LearningPath, StudyEvent
+
     doc = db.query(Document).filter(Document.id == document_id, Document.owner_id == owner_id).first()
     if not doc:
         raise HTTPException(status_code=404, detail="Document not found")
+
+    # A fresh start means everything built from this document goes too:
+    # its learning paths (and their lessons, versions, questions, attempts),
+    # the study events and doubts that reference those paths, and all
+    # pages/chunks with their pgvector embeddings.
+    paths = db.query(LearningPath).filter(LearningPath.document_id == document_id).all()
+    path_ids = [path.id for path in paths]
+    if path_ids:
+        db.query(Doubt).filter(Doubt.path_id.in_(path_ids)).delete(synchronize_session=False)
+        db.query(StudyEvent).filter(StudyEvent.path_id.in_(path_ids)).delete(synchronize_session=False)
+        db.query(GenerationJob).filter(GenerationJob.path_id.in_(path_ids)).delete(synchronize_session=False)
+    for path in paths:
+        db.delete(path)
+    db.query(DocumentChunk).filter(DocumentChunk.document_id == document_id).delete(synchronize_session=False)
+    db.query(DocumentPage).filter(DocumentPage.document_id == document_id).delete(synchronize_session=False)
 
     if doc.storage_key:
         try:
@@ -298,7 +317,19 @@ async def delete_document(
 
     db.delete(doc)
     db.commit()
-    return {"status": "deleted", "success": True, "documentId": str(document_id)}
+
+    base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+    diagrams_dir = os.path.join(base_dir, "diagrams", str(document_id))
+    if os.path.isdir(diagrams_dir):
+        import shutil
+        shutil.rmtree(diagrams_dir, ignore_errors=True)
+
+    return {
+        "status": "deleted",
+        "success": True,
+        "documentId": str(document_id),
+        "deletedPaths": len(path_ids),
+    }
 
 
 @router.get("/{document_id}/diagrams/{filename}")

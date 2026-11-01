@@ -1,6 +1,6 @@
 import uuid
 import datetime
-from sqlalchemy import Column, String, Integer, DateTime, ForeignKey, JSON, UniqueConstraint
+from sqlalchemy import Column, String, Integer, DateTime, ForeignKey, JSON, Text, UniqueConstraint
 from sqlalchemy.dialects.postgresql import UUID
 from app.models.base import Base
 
@@ -42,4 +42,16 @@ class TeacherAction(Base):
     status = Column(String(50), default="proposed")  # proposed, accepted, edited, dismissed
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
     resolved_at = Column(DateTime, nullable=True)
+
+
+class ClassroomMessage(Base):
+    __tablename__ = "classroom_messages"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    classroom_id = Column(UUID(as_uuid=True), ForeignKey("classrooms.id", ondelete="CASCADE"), nullable=False, index=True)
+    sender_id = Column(UUID(as_uuid=True), nullable=False, index=True)
+    kind = Column(String(20), default="group")  # group, direct
+    recipient_id = Column(UUID(as_uuid=True), nullable=True)
+    body = Column(Text, nullable=False)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow, index=True)
 

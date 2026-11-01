@@ -10,6 +10,7 @@ from app.api.v1.auth import router as auth_router
 from app.api.v1.profile import router as profile_router
 from app.api.v1.teacher import router as teacher_router
 from app.api.v1.study import router as study_router
+from app.api.v1.classroom import router as classroom_router
 
 api_router = APIRouter()
 api_router.include_router(health_router, tags=["Health"])
@@ -23,4 +24,5 @@ api_router.include_router(doubts_router, prefix="/doubts", tags=["Doubts"])
 api_router.include_router(sync_router, prefix="/sync", tags=["Sync"])
 api_router.include_router(teacher_router, prefix="/teacher", tags=["Teacher"])
 api_router.include_router(study_router, prefix="/study", tags=["Study"])
+api_router.include_router(classroom_router, prefix="/classroom", tags=["Classroom"])
 

@@ -12,40 +12,50 @@ import { syncManager } from '../services/syncManager';
 import styles from './LessonReaderPage.module.css';
 
 function momentToCard(moment: LessonCoachMoment, coaching: LessonCoaching): CoachCard {
-  const keyPoint = coaching.moments.find((item) => item.kind === 'key_point');
-  const source = coaching.moments.find(
-    (item) => (item.kind === 'source_spotlight' || item.kind === 'fun_fact') && item.source
-  );
-  const tip = coaching.moments.find((item) => item.kind === 'study_tip');
+  const isKeyPoint = moment.kind === 'key_point';
+  const isSource = moment.kind === 'source_spotlight' || moment.kind === 'fun_fact';
+  const isTip = moment.kind === 'study_tip';
   const base: CoachCard = {
     id: moment.id,
     scope: 'lesson',
     tone: moment.kind === 'challenge' ? 'retry' : 'celebrate',
     headline: moment.title,
     body: moment.body,
-    keyPoint: keyPoint ? { title: keyPoint.title, body: keyPoint.body } : null,
-    source:
-      source && source.source
-        ? {
-            page: source.source.page,
-            title: source.source.title,
-            excerpt: source.body,
-          }
-        : null,
-    studyTip: tip ? { title: tip.title, body: tip.body } : null,
+    // Complementary sections only when they are a different moment, so the
+    // headline never repeats the same text as a block below it.
+    keyPoint: null,
+    source: null,
+    studyTip: null,
   };
-  if (moment.kind === 'key_point') {
+  if (isKeyPoint) {
     base.keyPoint = { title: moment.title, body: moment.body };
+  } else {
+    const keyPoint = coaching.moments.find((item) => item.kind === 'key_point');
+    if (keyPoint) base.keyPoint = { title: keyPoint.title, body: keyPoint.body };
   }
-  if ((moment.kind === 'source_spotlight' || moment.kind === 'fun_fact') && moment.source) {
+  if (isSource && moment.source) {
     base.source = {
       page: moment.source.page,
       title: moment.source.title,
       excerpt: moment.body,
     };
+  } else {
+    const source = coaching.moments.find(
+      (item) => (item.kind === 'source_spotlight' || item.kind === 'fun_fact') && item.source
+    );
+    if (source && source.source) {
+      base.source = {
+        page: source.source.page,
+        title: source.source.title,
+        excerpt: source.body,
+      };
+    }
   }
-  if (moment.kind === 'study_tip') {
+  if (isTip) {
     base.studyTip = { title: moment.title, body: moment.body };
+  } else {
+    const tip = coaching.moments.find((item) => item.kind === 'study_tip');
+    if (tip) base.studyTip = { title: tip.title, body: tip.body };
   }
   return base;
 }
@@ -472,15 +482,12 @@ export const LessonReaderPage: React.FC = () => {
         subtitle: 'It will be graded and added to your evidence when you reconnect.',
       });
     } else if (results.length > 0) {
-      setCelebration({
-        title:
-          correct === lessonPackage.checkpointTest.length
-            ? 'Checkpoint complete — every answer correct'
-            : `Checkpoint complete · ${correct} of ${lessonPackage.checkpointTest.length}`,
-        subtitle:
-          last?.mastery?.explanation ||
-          'Your answers are recorded and the next plan is already adapting.',
-      });
+      if (correct === lessonPackage.checkpointTest.length) {
+        setCelebration({
+          title: 'Checkpoint complete — every answer correct',
+          subtitle: last?.mastery?.explanation || 'Your answers are recorded and the next plan is already adapting.',
+        });
+      }
     }
   };
 
