@@ -14,6 +14,7 @@ from app.core.security import get_current_user_id
 from app.core.storage import storage_service
 from app.models.documents import Document, DocumentChunk, DocumentPage
 from app.services.lesson_generator import lesson_generator_service
+from app.services.pipeline_runner import notify_pipeline
 
 router = APIRouter()
 
@@ -193,6 +194,7 @@ async def upload_document(
     doc.safe_error_message = None
     db.commit()
     db.refresh(doc)
+    notify_pipeline()
     return _document_payload(doc, 0)
 
 
@@ -255,6 +257,7 @@ def retry_document(
     doc.lease_expires_at = None
     doc.attempt_count = 0
     db.commit()
+    notify_pipeline()
     return _document_payload(doc, 0)
 
 

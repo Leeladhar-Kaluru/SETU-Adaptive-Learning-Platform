@@ -1,0 +1,213 @@
+{
+  "capturedAt": "2026-11-01T04:37:52.146Z",
+  "paths": [
+    {
+      "id": "36b50b87-1e49-4985-baf0-00089009d50b",
+      "documentId": "a083f88a-78f8-47f0-9422-0af09bda901b",
+      "title": "jess2ps",
+      "grade": 10,
+      "subjectId": "subject-social",
+      "status": "active",
+      "totalLessons": 1,
+      "readyLessons": 1,
+      "firstLessonId": "5d2ec810-e3ae-4d91-9320-c474e56897b7",
+      "lessons": [
+        {
+          "id": "5d2ec810-e3ae-4d91-9320-c474e56897b7",
+          "title": "Chapter Chapter Appendix Suggested Readings Development Sectors of the Indian Economy Money and Credit",
+          "status": "ready",
+          "sequence": 1
+        }
+      ]
+    },
+    {
+      "id": "9c386a47-bdf2-4c9c-8648-2102f2ec6640",
+      "documentId": "f048dba9-e95e-477c-93a4-aa24b673fc84",
+      "title": "hemh1ps",
+      "grade": 8,
+      "subjectId": "subject-math",
+      "status": "active",
+      "totalLessons": 1,
+      "readyLessons": 1,
+      "firstLessonId": "0c82d346-8f82-4c2c-b3d4-64b1c39d3ded",
+      "lessons": [
+        {
+          "id": "0c82d346-8f82-4c2c-b3d4-64b1c39d3ded",
+          "title": "Chapter 1: Rational Numbers Chapter Linear Equations in One Variable Chapter Understanding Quadrilaterals Chapter Data Handling",
+          "status": "ready",
+          "sequence": 1
+        }
+      ]
+    },
+    {
+      "id": "f813f547-9044-4afc-90c1-7f23e0498523",
+      "documentId": "6a75e865-793a-4d98-9f8d-4d96d0438f1a",
+      "title": "fecu1ps",
+      "grade": 6,
+      "subjectId": "subject-science",
+      "status": "active",
+      "totalLessons": 3,
+      "readyLessons": 3,
+      "firstLessonId": "f1decb5a-7510-41c9-90e7-3a7988abff14",
+      "lessons": [
+        {
+          "id": "f1decb5a-7510-41c9-90e7-3a7988abff14",
+          "title": "Chapter 1: titled 'The Wonderful World of Science', provides a",
+          "status": "ready",
+          "sequence": 1
+        },
+        {
+          "id": "03b96ab2-b65d-4044-9a18-e251e402470b",
+          "title": "Chapter 2: Beyond Earth.'",
+          "status": "ready",
+          "sequence": 2
+        },
+        {
+          "id": "12fbdfcb-ff5a-4020-a132-48b32c4ce725",
+          "title": "Chapter 3: The Wonderful World of Science Chapter Diversity in the Living World Chapter",
+          "status": "ready",
+          "sequence": 3
+        }
+      ]
+    },
+    {
+      "id": "134d25c2-4cc3-4476-bc9b-d3af03c16194",
+      "documentId": "383d7c7e-a06d-4d6d-a131-3af0ba89dfc8",
+      "title": "TS-SCERT-Class-10-Social-Science-Textbook-in-English-Medium",
+      "grade": 10,
+      "subjectId": "subject-social",
+      "status": "active",
+      "totalLessons": 21,
+      "readyLessons": 21,
+      "firstLessonId": "193d7516-ab6e-4599-871b-75ff4b29f34d",
+      "lessons": [
+        {
+          "id": "193d7516-ab6e-4599-871b-75ff4b29f34d",
+          "title": "Chapter 1: India - Relief Features",
+          "status": "ready",
+          "sequence": 1
+        },
+        {
+          "id": "53da008e-1cdd-4bbd-86c9-ebe39411820c",
+          "title": "Chapter 2: Ideas of Development",
+          "status": "ready",
+          "sequence": 2
+        },
+        {
+          "id": "e693d56d-a7e3-4ad3-8edd-977c58910db8",
+          "title": "Chapter 3: Production and Employment",
+          "status": "ready",
+          "sequence": 3
+        },
+        {
+          "id": "6d70e43b-d10b-4d40-bbe3-205e820fb059",
+          "title": "Chapter 4: Climate of India",
+          "status": "ready",
+          "sequence": 4
+        },
+        {
+          "id": "4d206dae-13b2-499d-a41b-8faecebdfa39",
+          "title": "Chapter 5: Indian Rivers and Water Resources",
+          "status": "ready",
+          "sequence": 5
+        },
+        {
+          "id": "6871e153-9dc5-43c3-9436-3c77f4c8f55a",
+          "title": "Chapter 6: The Population",
+          "status": "ready",
+          "sequence": 6
+        },
+        {
+          "id": "5c6d7f62-b909-4286-bc56-007aeb9dade2",
+          "title": "Chapter 7: Settlements - Migrations",
+          "status": "ready",
+          "sequence": 7
+        },
+        {
+          "id": "83e14fb1-e356-45ba-8cdc-b12fec6a6c0a",
+          "title": "Chapter 8: Rampur : A Village Economy",
+          "status": "ready",
+          "sequence": 8
+        },
+        {
+          "id": "885922ed-1fac-4a30-9a5a-212b543e796d",
+          "title": "Chapter 9: Globalisation",
+          "status": "ready",
+          "sequence": 9
+        },
+        {
+          "id": "87ce6658-308c-4ae9-affa-ba034290ed88",
+          "title": "Chapter 10: Food Security",
+          "status": "ready",
+          "sequence": 10
+        },
+        {
+          "id": "9f4b4afa-221e-46c1-b369-830a97ad62b6",
+          "title": "Chapter 11: Sustainable Development with Equity",
+          "status": "ready",
+          "sequence": 11
+        },
+        {
+          "id": "1bf6b8ab-2bbc-4b4d-8328-30563f1ac2cf",
+          "title": "Chapter 12: The World During the World Wars",
+          "status": "ready",
+          "sequence": 12
+        },
+        {
+          "id": "22ee5f54-8108-47bf-a6e6-833233271427",
+          "title": "Chapter 13: National Liberation Movements in the Colonies",
+          "status": "ready",
+          "sequence": 13
+        },
+        {
+          "id": "e2c2d96b-51f3-4903-9370-6942bb25f236",
+          "title": "Chapter 14: National Movement in India–Partition & Independence",
+          "status": "ready",
+          "sequence": 14
+        },
+        {
+          "id": "28d005d1-a62e-40ca-94b1-225d9823ebf3",
+          "title": "Chapter 15: The Making of Independent India's Constitution",
+          "status": "ready",
+          "sequence": 15
+        },
+        {
+          "id": "47f5cdba-be16-4964-9dc4-3e6d6e90dd95",
+          "title": "Chapter 16: The Election Process in India",
+          "status": "ready",
+          "sequence": 16
+        },
+        {
+          "id": "66fee924-db28-4315-abd7-ecf60268ad14",
+          "title": "Chapter 17: Independent India Part - I",
+          "status": "ready",
+          "sequence": 17
+        },
+        {
+          "id": "6665ce21-cda9-41a6-b20d-b45064178dda",
+          "title": "Chapter 18: Independent India - Part II",
+          "status": "ready",
+          "sequence": 18
+        },
+        {
+          "id": "41a98c21-f03d-4239-9efd-7b7bc26faf5c",
+          "title": "Chapter 19: Post - War World and India",
+          "status": "ready",
+          "sequence": 19
+        },
+        {
+          "id": "4f057f6c-e5c4-4d07-b324-453e5427c43a",
+          "title": "Chapter 20: Social Movements in Our Times",
+          "status": "ready",
+          "sequence": 20
+        },
+        {
+          "id": "60691e1f-7cdb-4303-8eab-f90ea84c6823",
+          "title": "Chapter 21: The Movement for the Formation of Telangana State",
+          "status": "ready",
+          "sequence": 21
+        }
+      ]
+    }
+  ]
+}

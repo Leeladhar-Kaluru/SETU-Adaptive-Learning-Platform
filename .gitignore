@@ -29,6 +29,10 @@
 **/playwright-report/
 acceptance/*.pdf
 **/acceptance/*.pdf
+context/ncert/
+test.db
+scratch/
+**/.agents/teamwork/
 
 # Generated exports (diagram tool output)
 diagrams/

@@ -78,7 +78,7 @@ def enqueue_coach_note(
 
 
 def claim_next_coach_note(db: Session, worker_id: str, lease_seconds: int = 120) -> Optional[CoachNote]:
-    now = datetime.datetime.now(datetime.timezone.utc)
+    now = datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None)
     db.query(CoachNote).filter(
         CoachNote.status == "claimed",
         CoachNote.lease_expires_at < now,

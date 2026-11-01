@@ -89,7 +89,8 @@
   padding: 0 12px 9px;
 }
 
-.navLink {
+.navLink,
+.navButton {
   display: flex;
   align-items: center;
   gap: 10px;
@@ -100,24 +101,32 @@
   font-size: 13.5px;
   font-weight: 600;
   line-height: 1.3;
+  background: transparent;
+  border: 0;
+  width: 100%;
+  text-align: left;
+  cursor: pointer;
   transition:
     background var(--transition-fast),
     color var(--transition-fast),
     transform var(--transition-fast);
 }
 
-.navLink svg {
+.navLink svg,
+.navButton svg {
   color: var(--ink-muted);
   transition: color var(--transition-fast);
 }
 
-.navLink:hover {
+.navLink:hover,
+.navButton:hover {
   color: var(--ink-primary);
   background: var(--bg-subtle);
   text-decoration: none;
 }
 
-.navLink:hover svg {
+.navLink:hover svg,
+.navButton:hover svg {
   color: var(--ink-secondary);
 }
 

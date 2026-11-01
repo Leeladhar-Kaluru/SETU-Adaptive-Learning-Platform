@@ -12,13 +12,11 @@ class Settings(BaseSettings):
     FRONTEND_ORIGINS: str = "http://localhost:5173,http://127.0.0.1:5173"
 
     DATABASE_URL: str
-    # Supabase's session-mode pooler caps the whole project at 15 clients, so
-    # each process must stay small. API gets 4+2, the worker is started with
-    # POOL_SIZE=2 / MAX_OVERFLOW=1 via environment.
-    # Sized for Supabase's 15-client session pooler: API 2+2, worker 1+1.
-    POOL_SIZE: int = 2
-    MAX_OVERFLOW: int = 2
+    # Sized for Supabase transaction pooler (port 6543)
+    POOL_SIZE: int = 5
+    MAX_OVERFLOW: int = 5
     POOL_TIMEOUT: int = 30
+    EMBEDDED_PIPELINE: bool = True
     SUPABASE_URL: str = ""
     SUPABASE_PUBLISHABLE_KEY: str = ""
     SUPABASE_SECRET_KEY: str = ""

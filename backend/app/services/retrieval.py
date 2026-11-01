@@ -25,8 +25,39 @@ class RetrievalService:
         query_vec = await ai_provider.get_embedding(query)
         vec_str = "[" + ",".join(str(x) for x in query_vec) + "]"
 
-        # 2. Vector search query
-        doc_filter = "AND d.id = :doc_id" if document_id else ""
+        # 2. Access condition and parameters
+        if document_id:
+            access_condition = """
+                d.id = :doc_id
+                AND (
+                    d.owner_id = :owner_id
+                    OR d.id IN (SELECT lp.document_id FROM learning_paths lp WHERE lp.owner_id = :owner_id AND lp.document_id IS NOT NULL)
+                    OR d.id IN (
+                        SELECT d2.id FROM documents d2
+                        JOIN classrooms c ON c.owner_teacher_id = d2.owner_id
+                        JOIN classroom_memberships cm ON cm.classroom_id = c.id
+                        WHERE cm.student_id = :owner_id
+                    )
+                    OR d.source_mode IN ('catalog', 'catalogue', 'curriculum', 'sample')
+                    OR EXISTS (SELECT 1 FROM user_profiles up WHERE up.id = :owner_id AND up.role IN ('teacher', 'admin'))
+                )
+            """
+        else:
+            access_condition = """
+                (
+                    d.owner_id = :owner_id
+                    OR d.id IN (SELECT lp.document_id FROM learning_paths lp WHERE lp.owner_id = :owner_id AND lp.document_id IS NOT NULL)
+                    OR d.id IN (
+                        SELECT d2.id FROM documents d2
+                        JOIN classrooms c ON c.owner_teacher_id = d2.owner_id
+                        JOIN classroom_memberships cm ON cm.classroom_id = c.id
+                        WHERE cm.student_id = :owner_id
+                    )
+                    OR d.source_mode IN ('catalog', 'catalogue', 'curriculum', 'sample')
+                    OR EXISTS (SELECT 1 FROM user_profiles up WHERE up.id = :owner_id AND up.role IN ('teacher', 'admin'))
+                )
+            """
+
         params: Dict[str, Any] = {
             "owner_id": str(owner_id),
             "top_k": top_k * 2,
@@ -42,13 +73,13 @@ class RetrievalService:
                    (c.embedding <=> cast(:vec_str as vector)) as distance
             FROM document_chunks c
             JOIN documents d ON c.document_id = d.id
-            WHERE d.owner_id = :owner_id {doc_filter}
+            WHERE {access_condition}
               AND d.deleted_at IS NULL
               AND d.status IN ('awaiting_review', 'ready')
               AND c.embedding IS NOT NULL
               AND c.embedding_model_id = :embedding_model
               AND c.embedding_dimension = :embedding_dim
-              AND (c.embedding <=> cast(:vec_str as vector)) <= 0.45
+              AND (c.embedding <=> cast(:vec_str as vector)) <= 0.65
             ORDER BY distance ASC
             LIMIT :top_k;
         """
@@ -61,7 +92,7 @@ class RetrievalService:
                    ts_rank_cd(c.search_text, plainto_tsquery('english', :query_text)) as fts_score
             FROM document_chunks c
             JOIN documents d ON c.document_id = d.id
-            WHERE d.owner_id = :owner_id {doc_filter}
+            WHERE {access_condition}
               AND d.deleted_at IS NULL
               AND d.status IN ('awaiting_review', 'ready')
               AND c.embedding IS NOT NULL

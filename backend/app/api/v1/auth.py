@@ -202,7 +202,7 @@ async def login(req: LoginRequest, db: Session = Depends(get_db)):
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=401, detail="Authentication server unavailable. Please try again.")
+        raise HTTPException(status_code=503, detail="The authentication service is temporarily unavailable. Please try again in a moment.")
 
     if not user_id_str or not access_token:
         raise HTTPException(

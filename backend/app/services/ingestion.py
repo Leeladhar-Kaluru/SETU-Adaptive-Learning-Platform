@@ -1,9 +1,12 @@
 """Document ingestion that runs after the file is already in Storage."""
 
-import os
+import asyncio
 import datetime
+import logging
+import os
 from typing import List
 
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from app.core.ai_provider import EmbeddingUnavailableError, ai_provider
@@ -13,16 +16,18 @@ from app.models.documents import Document, DocumentChunk, DocumentPage
 from app.services.chunking import chunking_service
 from app.services.extraction import extraction_service
 
+logger = logging.getLogger(__name__)
+
 LEASE_SECONDS = 600
 OCR_MARKER = "[Image-only or empty page"
 
 
 def _touch_lease(doc: Document) -> None:
-    doc.lease_expires_at = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(seconds=LEASE_SECONDS)
+    doc.lease_expires_at = datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None) + datetime.timedelta(seconds=LEASE_SECONDS)
 
 
 def _usable_text(text: str) -> str:
-    cleaned = (text or "").strip()
+    cleaned = (text or "").replace("\x00", "").strip()
     if not cleaned or cleaned.startswith(OCR_MARKER):
         return ""
     return cleaned
@@ -41,19 +46,16 @@ async def process_claimed_document(db: Session, doc: Document) -> None:
         db.commit()
 
         def on_page_progress(current_page: int, total_pages: int, message: str):
-            _touch_lease(doc)
-            doc.safe_error_message = f"Processing page {current_page}/{total_pages}..."
-            try:
-                db.commit()
-            except Exception:
-                pass
+            logger.info("Extracting document %s: page %d/%d (%s)", document_id, current_page, total_pages, message)
 
-        pages = extraction_service.extract_document(
+        pages = await asyncio.to_thread(
+            extraction_service.extract_document,
             file_bytes=content,
             filename=doc.original_filename,
             mime_type=doc.mime_type,
             progress_callback=on_page_progress,
         )
+        _touch_lease(doc)
         usable = [p for p in pages if _usable_text(p.get("text", ""))]
         scanned = [p for p in pages if p.get("is_scanned_ocr_needed")]
 
@@ -118,7 +120,13 @@ async def process_claimed_document(db: Session, doc: Document) -> None:
         db.commit()
 
         chunks = chunking_service.create_chunks(pages)
-        indexable = [c for c in chunks if _usable_text(c.get("text", ""))]
+        indexable = []
+        for c in chunks:
+            clean_chunk_text = _usable_text(c.get("text", ""))
+            if clean_chunk_text:
+                c["text"] = clean_chunk_text
+                indexable.append(c)
+
         if not indexable:
             doc.status = "needs_ocr"
             doc.safe_error_message = "Extraction produced no text that can be indexed."
@@ -133,10 +141,11 @@ async def process_claimed_document(db: Session, doc: Document) -> None:
         for batch_start in range(0, len(indexable), BATCH_SIZE):
             batch = indexable[batch_start:batch_start + BATCH_SIZE]
             texts = [(chunk.get("text") or "").replace("\x00", "").strip() for chunk in batch]
-            if any(not text for text in texts):
-                raise ValueError("Chunk text is empty; refusing to embed blank content.")
+            texts = [t for t in texts if t]
+            if not texts:
+                continue
             vectors = await ai_provider.get_embeddings_batch(texts)
-            if len(vectors) != len(batch):
+            if len(vectors) != len(texts):
                 raise ValueError("Embedding count does not match the chunk batch.")
             embedded_chunks.extend(zip(batch, vectors))
 
@@ -167,18 +176,37 @@ async def process_claimed_document(db: Session, doc: Document) -> None:
         doc.lease_expires_at = None
         db.commit()
     except Exception as exc:
-        db.rollback()
-        failed = db.query(Document).filter(Document.id == document_id).first()
-        if failed:
-            # All-or-nothing: never leave partially embedded chunks behind after a failure.
-            db.query(DocumentChunk).filter(DocumentChunk.document_id == document_id).delete()
-            failed.status = "failed"
-            if isinstance(exc, EmbeddingUnavailableError) or "embedding" in str(exc).lower():
-                failed.error_code = "embedding_unavailable"
-                failed.safe_error_message = "The embedding service is unavailable. Retry when it is running."
-            else:
-                failed.error_code = "processing_failed"
-                failed.safe_error_message = "The document could not be processed. Retry or upload a readable copy."
-            failed.lease_owner = None
-            failed.lease_expires_at = None
-            db.commit()
+        logger.exception("Document %s processing failed with error: %s", document_id, exc)
+        try:
+            db.rollback()
+        except Exception as rb_exc:
+            logger.warning("Rollback failed for document %s: %s", document_id, rb_exc)
+
+        try:
+            failed = db.query(Document).filter(Document.id == document_id).first()
+            if failed:
+                # All-or-nothing: never leave partially embedded chunks behind after a failure.
+                try:
+                    db.query(DocumentChunk).filter(DocumentChunk.document_id == document_id).delete()
+                except Exception as del_exc:
+                    logger.warning("Failed to clean document chunks on failure: %s", del_exc)
+
+                failed.status = "failed"
+                exc_str = str(exc).lower()
+                if isinstance(exc, EmbeddingUnavailableError) or "embedding" in exc_str:
+                    failed.error_code = "embedding_unavailable"
+                    failed.safe_error_message = "The embedding service is unavailable. Retry when it is running."
+                elif "extract" in exc_str or "pdf" in exc_str or "mupdf" in exc_str:
+                    failed.error_code = "extraction_failed"
+                    failed.safe_error_message = f"Document extraction failed: {str(exc)}"
+                elif isinstance(exc, SQLAlchemyError) or "database" in exc_str or "operationalerror" in str(type(exc)).lower() or "pendingrollbackerror" in str(type(exc)).lower():
+                    failed.error_code = "database_error"
+                    failed.safe_error_message = f"Database error during processing: {str(exc)}"
+                else:
+                    failed.error_code = "processing_failed"
+                    failed.safe_error_message = "The document could not be processed. Retry or upload a readable copy."
+                failed.lease_owner = None
+                failed.lease_expires_at = None
+                db.commit()
+        except Exception as handler_exc:
+            logger.exception("Failed to update status for failed document %s: %s", document_id, handler_exc)

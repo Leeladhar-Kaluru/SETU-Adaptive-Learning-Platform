@@ -63,12 +63,16 @@ _NON_TITLE_HEADERS = {
     "answers", "answer key", "appendix", "worksheet", "index", "contents",
     "note", "notes", "summary", "key points", "do you know",
     "what have we discussed", "learning further", "keywords", "reprint",
+    "free distribution", "free distribution by", "government of", "scert", "ncert",
+    "academic standards", "our national anthem", "national anthem", "pledge",
+    "constitution of india", "preamble", "foreword", "preface",
 }
 _NON_TITLE_WORDS = {
     "notes", "solution", "example", "exercise", "exercises", "activity",
     "activities", "glossary", "summary", "appendix", "index", "fig", "figure",
     "table", "step", "statement", "therefore", "chapter", "unit", "section",
     "lesson", "answers", "answer", "note", "worksheet", "contents",
+    "distribution", "preface", "foreword", "preamble", "anthem", "pledge",
 }
 
 _VISUAL_TYPES = {
@@ -147,71 +151,84 @@ class LessonGeneratorService:
             raise ValueError("This document has no extractable text to build a learning path.")
 
         page_by_number = {page["page_number"]: page for page in pages}
-        header_sections = self._running_header_sections(pages, page_by_number)
-        marker_sections = self._chapter_marker_sections(pages, page_by_number)
-        if marker_sections:
-            # Marker sections carry the full opening-page title, so they win ties
-            # over truncated running-header titles. Header runs that a chapter
-            # marker falls inside are spanning multiple chapters; runs wholly
-            # inside one marker-bounded range are redundant when they repeat the
-            # marker's title, and single-word or two-page runs inside a range
-            # are vertical-title art or section furniture, not chapters.
-            first_marker_start = min(m["pageStart"] for m in marker_sections)
-            marker_starts = sorted(m["pageStart"] for m in marker_sections)
-            marker_ranges = [
-                (
-                    marker_starts[i],
-                    (marker_starts[i + 1] - 1) if i + 1 < len(marker_starts)
-                    else (pages[-1]["page_number"] if pages else marker_starts[i]),
-                )
-                for i in range(len(marker_starts))
-            ]
-            marker_titles = [m.get("title") for m in marker_sections if m.get("title")]
-            kept_headers = []
-            for header in header_sections:
-                start = header["pageStart"]
-                end = max(header.get("pageEnd") or start, start)
-                if start < first_marker_start - 2:
-                    continue
-                if any(start <= marker_start < end for marker_start in marker_starts):
-                    continue
-                if marker_titles and any(
-                    self._similar_titles(header["title"], title)
-                    for title in marker_titles
-                ):
-                    continue
-                if header.get("pageCount", 99) < 2:
-                    # A title that repeats on a single page is vertical art on
-                    # an opener, not a running header.
-                    continue
-                if len((header.get("title") or "").split()) == 1 and any(
-                    range_start <= start and end <= range_end
-                    for range_start, range_end in marker_ranges
-                ):
-                    continue
-                if any(
-                    range_start <= start and end <= range_end
-                    for range_start, range_end in marker_ranges
-                ) and self._title_is_section_heading(
-                    page_by_number, start, end, header["title"]
-                ):
-                    # A numbered section heading ("3.3 Loans from
-                    # Cooperatives") repeated as a page header is not a chapter.
-                    continue
-                kept_headers.append(header)
-            header_sections = kept_headers
-        sections = marker_sections + header_sections
-        if len(sections) < 2:
-            heading_sections = self._section_heading_sections(pages)
-            if heading_sections:
-                sections = heading_sections
+
+        # 1. Authoritative Table of Contents / Index detection
+        toc_entries = self._parse_table_of_contents_pages(pages)
+        sections: List[Dict[str, Any]] = []
+        if len(toc_entries) >= 2:
+            sections = self._toc_sections(toc_entries, pages, page_by_number)
+
+        # 2. Fallback to running headers and chapter markers if no TOC
         if not sections:
-            first = pages[0]
-            sections = [{
-                "title": self._first_line(first["text"]),
-                "pageStart": first["page_number"],
-                "pageEnd": first["page_number"],
-            }]
+            header_sections = self._running_header_sections(pages, page_by_number)
+            marker_sections = self._chapter_marker_sections(pages, page_by_number)
+            if marker_sections:
+                # Marker sections carry the full opening-page title, so they win ties
+                # over truncated running-header titles. Header runs that a chapter
+                # marker falls inside are spanning multiple chapters; runs wholly
+                # inside one marker-bounded range are redundant when they repeat the
+                # marker's title, and single-word or two-page runs inside a range
+                # are vertical-title art or section furniture, not chapters.
+                first_marker_start = min(m["pageStart"] for m in marker_sections)
+                marker_starts = sorted(m["pageStart"] for m in marker_sections)
+                marker_ranges = [
+                    (
+                        marker_starts[i],
+                        (marker_starts[i + 1] - 1) if i + 1 < len(marker_starts)
+                        else (pages[-1]["page_number"] if pages else marker_starts[i]),
+                    )
+                    for i in range(len(marker_starts))
+                ]
+                marker_titles = [m.get("title") for m in marker_sections if m.get("title")]
+                kept_headers = []
+                for header in header_sections:
+                    start = header["pageStart"]
+                    end = max(header.get("pageEnd") or start, start)
+                    if start < first_marker_start - 2:
+                        continue
+                    if any(start <= marker_start < end for marker_start in marker_starts):
+                        continue
+                    if marker_titles and any(
+                        self._similar_titles(header["title"], title)
+                        for title in marker_titles
+                    ):
+                        continue
+                    if header.get("pageCount", 99) < 2:
+                        # A title that repeats on a single page is vertical art on
+                        # an opener, not a running header.
+                        continue
+                    if len((header.get("title") or "").split()) == 1 and any(
+                        range_start <= start and end <= range_end
+                        for range_start, range_end in marker_ranges
+                    ):
+                        continue
+                    if any(
+                        range_start <= start and end <= range_end
+                        for range_start, range_end in marker_ranges
+                    ) and self._title_is_section_heading(
+                        page_by_number, start, end, header["title"]
+                    ):
+                        # A numbered section heading ("3.3 Loans from
+                        # Cooperatives") repeated as a page header is not a chapter.
+                        continue
+                    kept_headers.append(header)
+                header_sections = kept_headers
+            sections = marker_sections + header_sections
+            if len(sections) < 2:
+                heading_sections = self._section_heading_sections(pages)
+                if heading_sections:
+                    sections = heading_sections
+            if not sections:
+                first = pages[0]
+                sections = [{
+                    "title": self._first_line(first["text"]),
+                    "pageStart": first["page_number"],
+                    "pageEnd": first["page_number"],
+                }]
+
+        # 3. If single chapter or short document (< 3 sections), expand into structured sub-lessons
+        if len(sections) < 3:
+            sections = self._expand_chapter_subsections(sections, pages, page_by_number)
 
         sections = self._finalise_sections(sections, pages)
 
@@ -227,6 +244,333 @@ class LessonGeneratorService:
     # Structure detection
     # ------------------------------------------------------------------
 
+    def _is_furniture(self, title: str) -> bool:
+        lower = (title or "").lower().strip()
+        if not lower:
+            return True
+        normalised = re.sub(r"[^a-z0-9 ]+", " ", lower)
+        normalised = re.sub(r"\s+", " ", normalised).strip()
+        if any(
+            normalised == bad or normalised.startswith(bad + " ")
+            for bad in _NON_TITLE_HEADERS
+        ):
+            return True
+        if len(re.findall(r"\d", lower)) >= 4:
+            # Year/edition stamps like "Reprint2024-25" are furniture.
+            return True
+        return any(word in _NON_TITLE_WORDS for word in lower.split())
+
+    def _clean_toc_title(self, title: str) -> str:
+        t = (title or "").replace("\ufffd", "-").replace("\u2013", "-").replace("\u2014", "-")
+        t = re.sub(r":([A-Za-z])", r": \1", t)
+        t = re.sub(r"\s*-\s*(I|II|III|IV|V|VI)\b", r" - \1", t)
+        t = re.sub(r"\s+", " ", t).strip()
+        return t
+
+    def _is_toc_indicator(self, line: str) -> bool:
+        clean = (line or "").strip()
+        if re.search(r"\b(contents|table of contents|index)\b|\)?UTZKTZY", clean, re.IGNORECASE):
+            return True
+        return False
+
+    def _parse_table_of_contents_pages(self, pages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Extract authoritative chapters and printed page numbers from Table of Contents / Index."""
+        single_line_re = re.compile(
+            r"^(?:(?:chapter|unit|lesson)\s+)?(\d{1,2})[\s.:\-]+([A-Za-z][A-Za-z0-9\s,\-–:()?'’\"\ufffd]+?)\s*[\.…_—\-\s]*\s+(\d{1,4})(?:\s*-\s*\d{1,4})?$",
+            re.IGNORECASE,
+        )
+        month_names = {
+            "january", "february", "march", "april", "may", "june",
+            "july", "august", "september", "october", "november", "december"
+        }
+        entries = []
+        in_toc = False
+        last_toc_page_num = 0
+
+        for page in pages[:18]:
+            text = page.get("text", "")
+            lines = [l.strip() for l in text.splitlines() if l.strip()]
+            page_num = page.get("page_number", 0)
+
+            is_toc = any(
+                self._is_toc_indicator(l)
+                for l in lines[:8]
+            )
+            if not is_toc and any(
+                re.search(r"\bpart\s*-\s*[iIvVxX0-9]+\b", l, re.IGNORECASE)
+                for l in lines[:8]
+            ):
+                is_toc = True
+
+            # Check if this page is a direct continuation of a multi-page TOC (e.g., First Flight Page 10)
+            if not is_toc and in_toc and (page_num == last_toc_page_num + 1):
+                if any(
+                    re.match(r"^(?:(?:chapter|unit|lesson)\s+)?\d{1,2}[\s.:\-]+", l, re.IGNORECASE)
+                    or re.match(r"^\d{1,2}\.$", l)
+                    for l in lines[:8]
+                ):
+                    is_toc = True
+
+            if not is_toc:
+                in_toc = False
+                continue
+
+            in_toc = True
+            last_toc_page_num = page_num
+
+            i = 0
+            while i < len(lines):
+                line = lines[i]
+
+                # Pattern 1: Single-line entry
+                m = single_line_re.match(line)
+                if m:
+                    ch_num, ch_title, p_start = m.groups()
+                    clean_title = self._clean_toc_title(ch_title)
+                    if clean_title and not clean_title.lower().startswith("page"):
+                        entries.append({
+                            "chapterNumber": int(ch_num),
+                            "title": clean_title,
+                            "printPageStart": int(p_start),
+                            "printPageEnd": int(p_start),
+                            "tocPage": page_num,
+                        })
+                    i += 1
+                    continue
+
+                # Pattern 2: Multi-line entry (title on line i, page on line i+1)
+                m_ch = re.match(
+                    r"^(?:(?:chapter|unit|lesson)\s+)?(\d{1,2})[\s.:\-]+([A-Za-z][A-Za-z0-9\s,\-–—:()?'’\"\ufffd]+)$",
+                    line,
+                    re.IGNORECASE,
+                )
+                if m_ch and i + 1 < len(lines):
+                    next_line = lines[i + 1]
+                    pm = re.match(r"^(\d{1,4})(?:\s*-\s*(\d{1,4}))?$", next_line)
+                    if pm:
+                        ch_num = int(m_ch.group(1))
+                        clean_title = self._clean_toc_title(m_ch.group(2))
+                        p_start = int(pm.group(1))
+                        p_end = int(pm.group(2)) if pm.group(2) else p_start
+                        if clean_title and not clean_title.lower().startswith("page") and clean_title.lower() not in month_names:
+                            entries.append({
+                                "chapterNumber": ch_num,
+                                "title": clean_title,
+                                "printPageStart": p_start,
+                                "printPageEnd": p_end,
+                                "tocPage": page_num,
+                            })
+                            i += 2
+                            continue
+
+                # Pattern 3: Chapter number alone on line i (e.g. "10.\nThe Sermon at Benares\n133")
+                m_num_dot = re.match(r"^(?:(?:chapter|unit|lesson)\s+)?(\d{1,2})\.?$", line, re.IGNORECASE)
+                if m_num_dot and i + 2 < len(lines):
+                    cand_title = lines[i + 1]
+                    cand_page = lines[i + 2]
+                    pm = re.match(r"^(\d{1,4})(?:\s*-\s*(\d{1,4}))?$", cand_page)
+                    if pm and len(cand_title) >= 3 and not cand_title.isdigit() and cand_title.lower() not in month_names:
+                        ch_num = int(m_num_dot.group(1))
+                        clean_title = self._clean_toc_title(cand_title)
+                        p_start = int(pm.group(1))
+                        p_end = int(pm.group(2)) if pm.group(2) else p_start
+                        if clean_title and not clean_title.lower().startswith("page"):
+                            entries.append({
+                                "chapterNumber": ch_num,
+                                "title": clean_title,
+                                "printPageStart": p_start,
+                                "printPageEnd": p_end,
+                                "tocPage": page_num,
+                            })
+                            i += 3
+                            continue
+
+                # Pattern 4: Standalone digit chapter number, but must maintain chapter continuity
+                if line.isdigit() and 1 <= int(line) <= 60:
+                    ch_num = int(line)
+                    expected_next = (entries[-1]["chapterNumber"] + 1) if entries else 1
+                    if abs(ch_num - expected_next) <= 2:
+                        if i + 1 < len(lines):
+                            cand_title = lines[i + 1]
+                            if (
+                                len(cand_title) >= 3
+                                and not cand_title.isdigit()
+                                and not cand_title.lower().startswith("part")
+                                and cand_title.lower() not in month_names
+                            ):
+                                p_start = None
+                                p_end = None
+                                offset_used = 1
+
+                                m_embedded = re.search(r"\s+(\d{1,4})\s*-\s*(\d{1,4})$", cand_title)
+                                if m_embedded:
+                                    p_start = int(m_embedded.group(1))
+                                    p_end = int(m_embedded.group(2))
+                                    cand_title = cand_title[:m_embedded.start()].strip()
+                                else:
+                                    for offset in (2, 3, 4):
+                                        if i + offset < len(lines):
+                                            cand_p = lines[i + offset]
+                                            pm = re.match(r"^(\d{1,4})(?:\s*-\s*(\d{1,4}))?$", cand_p)
+                                            if pm:
+                                                p_start = int(pm.group(1))
+                                                p_end = int(pm.group(2)) if pm.group(2) else p_start
+                                                offset_used = offset
+                                                break
+                                if p_start is not None:
+                                    clean_t = self._clean_toc_title(cand_title)
+                                    entries.append({
+                                        "chapterNumber": ch_num,
+                                        "title": clean_t,
+                                        "printPageStart": p_start,
+                                        "printPageEnd": p_end or p_start,
+                                        "tocPage": page_num,
+                                    })
+                                    i += offset_used + 1
+                                    continue
+                i += 1
+
+        seen = set()
+        deduped = []
+        for e in entries:
+            if e["chapterNumber"] not in seen:
+                seen.add(e["chapterNumber"])
+                deduped.append(e)
+        return sorted(deduped, key=lambda x: x["chapterNumber"])
+
+    def _toc_sections(
+        self,
+        toc_entries: List[Dict[str, Any]],
+        pages: List[Dict[str, Any]],
+        page_by_number: Dict[int, Dict[str, Any]],
+    ) -> List[Dict[str, Any]]:
+        """Map Table of Contents entries to PDF page coordinates."""
+        if not toc_entries:
+            return []
+
+        first_ch = toc_entries[0]
+        first_ch_num = first_ch.get("chapterNumber", 1)
+        first_print_page = first_ch.get("printPageStart", 1)
+        first_title_words = [
+            w.lower() for w in re.sub(r"[^a-zA-Z0-9\s]", "", first_ch.get("title", "")).split()
+            if len(w) > 3 and w.lower() not in _NON_TITLE_WORDS
+        ]
+
+        last_toc_page = max(
+            [p["page_number"] for p in pages[:18] if any(
+                self._is_toc_indicator(l) for l in self._page_lines(p["text"])[:8]
+            )] + [e.get("tocPage", 1) for e in toc_entries],
+            default=1,
+        )
+
+        ch1_pdf_page = None
+        for p in pages:
+            p_num = p["page_number"]
+            if p_num <= last_toc_page:
+                continue
+            if p_num > last_toc_page + 30:
+                break
+            top_lines = " ".join(self._page_lines(p["text"])[:8]).lower()
+            if f"chapter{first_ch_num}" in top_lines or f"chapter {first_ch_num}" in top_lines:
+                ch1_pdf_page = p_num
+                break
+            if first_title_words and all(w in top_lines for w in first_title_words[:2]):
+                ch1_pdf_page = p_num
+                break
+
+        if ch1_pdf_page is not None:
+            offset = ch1_pdf_page - first_print_page
+        else:
+            offset = max(0, (last_toc_page + 1) - first_print_page)
+
+        total_pages = pages[-1]["page_number"]
+        sections: List[Dict[str, Any]] = []
+        for i, entry in enumerate(toc_entries):
+            p_start = max(1, min(total_pages, entry["printPageStart"] + offset))
+            p_end = max(p_start, min(total_pages, entry.get("printPageEnd", entry["printPageStart"]) + offset))
+            t = entry["title"].strip()
+            t = re.sub(r"^(?:chapter|unit|lesson)\s*\d+[\s:.-]*", "", t, flags=re.IGNORECASE).strip()
+            sections.append({
+                "title": t,
+                "pageStart": p_start,
+                "pageEnd": p_end,
+                "source": "toc",
+            })
+        return sections
+
+    def _expand_chapter_subsections(
+        self,
+        sections: List[Dict[str, Any]],
+        pages: List[Dict[str, Any]],
+        page_by_number: Dict[int, Dict[str, Any]],
+    ) -> List[Dict[str, Any]]:
+        """If document has fewer than 3 sections, break down into structured sub-lessons."""
+        if len(sections) >= 3 or not sections:
+            return sections
+
+        expanded: List[Dict[str, Any]] = []
+        for sec in sections:
+            start = sec["pageStart"]
+            end = sec.get("pageEnd", start)
+            sec_pages = [p for p in pages if start <= p["page_number"] <= end]
+
+            subsections = []
+            seen_subs = set()
+            for p in sec_pages:
+                for line in self._page_lines(p["text"])[:30]:
+                    m = _SECTION_HEADING.match(line)
+                    if m:
+                        sub_num, sub_title = m.groups()
+                        sub_title = self._clean_title_fragment(sub_title)
+                        if sub_title and len(sub_title) >= 4 and not self._is_furniture(sub_title):
+                            k = sub_title.lower()
+                            if k not in seen_subs:
+                                seen_subs.add(k)
+                                subsections.append({
+                                    "title": f"{sub_num} {sub_title}",
+                                    "pageStart": p["page_number"],
+                                    "source": "subsection",
+                                })
+
+            if len(subsections) >= 2:
+                for idx, sub in enumerate(subsections):
+                    if idx + 1 < len(subsections):
+                        sub["pageEnd"] = max(sub["pageStart"], subsections[idx + 1]["pageStart"] - 1)
+                    else:
+                        sub["pageEnd"] = end
+                expanded.extend(subsections)
+            elif len(sec_pages) >= 4:
+                base_title = sec["title"]
+                total_p = len(sec_pages)
+                p1_end = sec_pages[max(0, int(total_p * 0.33) - 1)]["page_number"]
+                p2_start = p1_end + 1
+                p2_end = sec_pages[max(0, int(total_p * 0.67) - 1)]["page_number"]
+                p3_start = p2_end + 1
+                p3_end = sec_pages[-1]["page_number"]
+
+                expanded.append({
+                    "title": f"{base_title}: Foundations & Core Concepts",
+                    "pageStart": start,
+                    "pageEnd": p1_end,
+                    "source": "pedagogical_split",
+                })
+                expanded.append({
+                    "title": f"{base_title}: In-Depth Principles & Mechanisms",
+                    "pageStart": p2_start,
+                    "pageEnd": p2_end,
+                    "source": "pedagogical_split",
+                })
+                expanded.append({
+                    "title": f"{base_title}: Practical Applications & Problem Solving",
+                    "pageStart": p3_start,
+                    "pageEnd": p3_end,
+                    "source": "pedagogical_split",
+                })
+            else:
+                expanded.append(sec)
+
+        return expanded if expanded else sections
+
     def _page_lines(self, text: str) -> List[str]:
         return [
             " ".join(raw.split())
@@ -239,37 +583,11 @@ class LessonGeneratorService:
         pages: List[Dict[str, Any]],
         page_by_number: Dict[int, Dict[str, Any]],
     ) -> List[Dict[str, Any]]:
-        """Detect chapters from repeated page-header lines.
-
-        Two textbook conventions are handled:
-
-        1. The chapter title itself is the header, printed on alternate pages
-           with the page number glued on ("RATIONAL NUMBERS  3") and the book
-           label on the other pages ("3 / MATHEMATICS").
-        2. A constant book label is followed by a changing title line.
-
-        Repeated furniture ("TRY THESE", "DO THIS") is never a title.
-        """
+        """Detect chapters from repeated page-header lines."""
         if len(pages) < 4:
             return []
 
-        def _is_furniture(title: str) -> bool:
-            lower = (title or "").lower().strip()
-            if not lower:
-                return True
-            # Punctuation-normalised so "Think, Discuss and Write" matches the
-            # furniture phrase "think discuss and write".
-            normalised = re.sub(r"[^a-z0-9 ]+", " ", lower)
-            normalised = re.sub(r"\s+", " ", normalised).strip()
-            if any(
-                normalised == bad or normalised.startswith(bad + " ")
-                for bad in _NON_TITLE_HEADERS
-            ):
-                return True
-            if len(re.findall(r"\d", lower)) >= 4:
-                # Year/edition stamps like "Reprint2024-25" are furniture.
-                return True
-            return any(word in _NON_TITLE_WORDS for word in lower.split())
+        _is_furniture = self._is_furniture
 
         def _candidates(text: str) -> List[str]:
             out: List[str] = []
@@ -282,6 +600,10 @@ class LessonGeneratorService:
                 if len(re.findall(r"[A-Za-z]", cleaned)) < 4:
                     continue
                 if "|" in cleaned:
+                    continue
+                if any(char in cleaned for char in ["*", "_", "[", "]", "{", "}", "\\", "/"]):
+                    continue
+                if re.search(r"[:;,]\S", cleaned):
                     continue
                 if _is_furniture(cleaned):
                     continue
@@ -547,10 +869,13 @@ class LessonGeneratorService:
         for section in cleaned:
             previous_is_marker = merged and merged[-1].get("source") == "marker"
             current_is_marker = section.get("source") == "marker"
+            previous_is_toc = merged and merged[-1].get("source") == "toc"
+            current_is_toc = section.get("source") == "toc"
             if (
                 merged
                 and self._mergeable_titles(merged[-1]["title"], section["title"])
                 and not (previous_is_marker and current_is_marker)
+                and not (previous_is_toc and current_is_toc)
             ):
                 previous = merged[-1]
                 previous_title = previous["title"]
@@ -582,10 +907,10 @@ class LessonGeneratorService:
             title = section["title"] or f"Section {index + 1}"
             if not re.match(r"^(chapter|unit|section|lesson)\b", title, re.IGNORECASE):
                 title = f"Chapter {index + 1}: {title}"
+            section["title"] = title[:180]
             section["chapterTitle"] = title[:180]
             section["chapterNumber"] = index + 1
             section["concepts"] = [title[:180]]
-            section.pop("title", None)
         return cleaned
 
     # ------------------------------------------------------------------
@@ -898,6 +1223,10 @@ class LessonGeneratorService:
             return False
         if left == right:
             return True
+        num_left = re.findall(r"\b(i|ii|iii|iv|v|vi|vii|viii|ix|x|1|2|3|4|5|6|7|8|9)\b", left)
+        num_right = re.findall(r"\b(i|ii|iii|iv|v|vi|vii|viii|ix|x|1|2|3|4|5|6|7|8|9)\b", right)
+        if num_left != num_right:
+            return False
         shorter, longer = (left, right) if len(left) < len(right) else (right, left)
         return len(shorter.split()) >= 2 and shorter in longer
 
@@ -1323,21 +1652,25 @@ class LessonGeneratorService:
             f"- objectives: [2-3 observable objectives]\n"
             f"- blocks: [{{'blockId': 'block_1', 'kind': 'explanation', 'heading': '...', 'content': 'plain text'}}]\n"
             f"  Allowed block kinds: explanation, example, definition, callout, check, summary, vocabulary, question_prompt, source_excerpt. content MUST be a string, not an object.\n"
+            f"  Format explanations in clean, structured paragraphs with empty lines between them. Use bullet points (•) for lists.\n"
             f"- visuals: [{{'visualId': 'visual_1', 'type': 'concept_map', 'altText': 'what the visual shows', "
             f"'spec': {{'schemaVersion': '1.0.0', 'visualId': 'visual_1', 'type': 'concept_map', "
             f"'title': '...', 'altText': 'what the visual shows', 'data': {{'nodes': [], 'edges': []}}}}}}]\n"
             f"- workedExamples: [{{'prompt': '...', 'steps': ['...'], 'answer': '...'}}]\n"
-            f"- practice: [1-2 questions]\n"
-            f"- checkpointTest: [1-2 independent questions]\n"
+            f"- practice: [at least 3-5 multiple_choice questions with progressive hints]\n"
+            f"- checkpointTest: [at least 5 independent multiple_choice questions]\n"
             f"- takeaways: [2-3 key takeaway sentences]\n\n"
             f"Every question MUST include questionId, type, prompt, conceptIds, answerKey, feedback.\n"
             f"Every practice and checkpointTest question MUST be type 'multiple_choice' "
             f"with an options array of exactly 4 strings, and answerKey.answer equal to "
             f"exactly one of the options. No fill-in-the-blank or short-answer questions.\n"
+            f"checkpointTest MUST contain at least 5 multiple_choice questions covering the key concepts.\n"
+            f"practice MUST contain at least 3 multiple_choice questions with progressive hints.\n"
             f"conceptIds MUST be a non-empty array of short lowercase concept identifiers.\n"
             f"hints MUST be an array of strings. feedback MUST be a string.\n\n"
             f"Keep the whole JSON compact (at most 4 content blocks).\n"
-            f"Never use LaTeX or markdown in any text field; write numbers like 82°30′ E in plain text.\n"
+            f"Never write LaTeX formulas, backslashes, dollar signs ($), or raw markdown in any text field.\n"
+            f"Express all mathematical formulas, units, and symbols in clean Unicode text (e.g. 50 km/h, 82°30′ E, H₂O, CO₂, 25 m², x² + y²).\n"
             f"Write explanations and questions in the language identified by '{safe_language}'. "
             f"Keep source terms, names and numbers exactly as they appear in the chunks.\n"
             f"Return only the JSON object, with no markdown fences or commentary."
@@ -1367,13 +1700,19 @@ class LessonGeneratorService:
 
             try:
                 package = json.loads(content)
-            except json.JSONDecodeError:
-                # Attempt minor structural JSON recovery for unclosed brackets
-                last_brace = content.rfind("}")
-                if last_brace > 0:
-                    package = json.loads(content[:last_brace + 1])
+            except json.JSONDecodeError as err:
+                idx = content.find("{")
+                if idx >= 0:
+                    try:
+                        package, _ = json.JSONDecoder().raw_decode(content[idx:])
+                    except Exception:
+                        last_brace = content.rfind("}")
+                        if last_brace > 0:
+                            package = json.loads(content[:last_brace + 1])
+                        else:
+                            raise err
                 else:
-                    raise
+                    raise err
 
             package = self._normalise_package(
                 package,
@@ -1387,15 +1726,26 @@ class LessonGeneratorService:
             package["sourceRefs"] = source_refs
             package["validation"] = {"status": "draft", "checks": []}
             # Practice and checkpoint must stay answerable in the UI: options only.
-            # Non-choice questions are dropped, never converted by guessing options.
-            package["practice"] = [
-                q for q in (package.get("practice") or [])
-                if q.get("type") == "multiple_choice"
-            ]
-            package["checkpointTest"] = [
-                q for q in (package.get("checkpointTest") or [])
-                if q.get("type") == "multiple_choice"
-            ]
+            def _is_mcq(q: Any) -> bool:
+                if not isinstance(q, dict):
+                    return False
+                t = str(q.get("type") or "multiple_choice").strip().lower()
+                opts = q.get("options")
+                return t in ("multiple_choice", "multiple-choice", "mcq") or (isinstance(opts, list) and len(opts) >= 2)
+
+            cleaned_practice = []
+            for q in (package.get("practice") or []):
+                if _is_mcq(q):
+                    q["type"] = "multiple_choice"
+                    cleaned_practice.append(q)
+            package["practice"] = cleaned_practice
+
+            cleaned_checkpoint = []
+            for q in (package.get("checkpointTest") or []):
+                if _is_mcq(q):
+                    q["type"] = "multiple_choice"
+                    cleaned_checkpoint.append(q)
+            package["checkpointTest"] = cleaned_checkpoint
             # Strip LaTeX/markdown artifacts so lesson text renders as plain prose.
             package = sanitize_tree(package)
         except Exception as exc:

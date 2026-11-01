@@ -17,6 +17,8 @@ class IncompleteGenerationError(RuntimeError):
 
 _TRANSIENT_PROVIDER_MARKERS = (
     "model is unloaded",
+    "unloaded",
+    "has not started loading",
     "failed to load model",
     "engine protocol startup was aborted",
     "terminated",
@@ -79,7 +81,7 @@ class AIProviderService:
         url = f"{self.base_url}/embeddings"
         payload = {"model": self.embed_model, "input": clean_inputs}
         response = None
-        delays = [1.0, 3.0, 6.0]
+        delays = [1.0, 3.0, 6.0, 10.0]
         for attempt in range(len(delays) + 1):
             try:
                 async with httpx.AsyncClient(timeout=60.0) as client:
@@ -168,11 +170,21 @@ class AIProviderService:
             content = message.get("content") or ""
             if not content.strip() and "reasoning_content" in message:
                 content = message["reasoning_content"]
+            if response_format:
+                # When caller requested JSON, preserve the raw JSON syntax untouched
+                # so prose sanitization does not mangle JSON braces, keys, or types.
+                # Caller will parse JSON and sanitize prose fields with sanitize_tree().
+                return content.strip()
             cleaned = _clean_generated_text(content)
             # Local reasoning models can spend the token budget on hidden
             # reasoning and return a half-written sentence, sometimes with a
-            # normal finish reason. Prose callers must never store that as a
-            # finished answer. JSON callers validate completeness by parsing.
+            # normal finish reason. If trailing text was cut off, recover the
+            # last fully completed sentence before checking completeness.
+            if not _is_complete_prose(cleaned):
+                last_punct = max(cleaned.rfind("."), cleaned.rfind("!"), cleaned.rfind("?"))
+                if last_punct > 40:
+                    cleaned = cleaned[: last_punct + 1].strip()
+
             if require_complete and not _is_complete_prose(cleaned):
                 raise IncompleteGenerationError(
                     "The model stopped before finishing its answer."

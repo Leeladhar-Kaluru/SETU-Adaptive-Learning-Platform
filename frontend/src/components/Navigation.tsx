@@ -14,6 +14,7 @@ import { syncManager } from '../services/syncManager';
 import { useAuth } from '../context/AuthContext';
 import { AuthModal } from './AuthModal';
 import { api } from '../services/api';
+import { openAskSetu } from './AskSetu';
 import styles from './Navigation.module.css';
 
 const initialsFor = (name: string) =>
@@ -95,9 +96,19 @@ export const Navigation: React.FC = () => {
         <nav className={styles.navLinks} aria-label="Primary">
           <span className={styles.navLabel} aria-hidden="true">Your desk</span>
           {!user ? (
-            <NavLink to="/" end className={linkClass}>
-              <Home size={16} aria-hidden="true" /> Home
-            </NavLink>
+            <>
+              <NavLink to="/" end className={linkClass}>
+                <Home size={16} aria-hidden="true" /> Home
+              </NavLink>
+              <button
+                type="button"
+                className={styles.navButton}
+                onClick={openAskSetu}
+                title="Ask the SETU AI tutor a question"
+              >
+                <Sparkles size={16} aria-hidden="true" /> Ask SETU
+              </button>
+            </>
           ) : user.role === 'teacher' ? (
             <NavLink to="/teacher" className={linkClass}>
               <GraduationCap size={16} aria-hidden="true" /> Classroom
@@ -120,6 +131,14 @@ export const Navigation: React.FC = () => {
                   <GraduationCap size={16} aria-hidden="true" /> Classroom
                 </NavLink>
               )}
+              <button
+                type="button"
+                className={styles.navButton}
+                onClick={openAskSetu}
+                title="Ask the SETU AI tutor a question"
+              >
+                <Sparkles size={16} aria-hidden="true" /> Ask SETU
+              </button>
               <NavLink to="/doubts" className={linkClass}>
                 <MessageCircleQuestion size={16} aria-hidden="true" /> Doubts
                 {pendingCount > 0 ? <span className={styles.countBadge}>{pendingCount}</span> : null}

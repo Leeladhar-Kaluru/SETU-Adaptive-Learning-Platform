@@ -8,6 +8,10 @@ from app.core.config import settings
 # API, the worker, and short-lived scripts never exhaust the shared cap.
 engine = create_engine(
     settings.DATABASE_URL,
+    connect_args={
+        "prepare_threshold": None,
+        "options": "-c idle_in_transaction_session_timeout=15000",
+    },
     pool_pre_ping=True,
     pool_recycle=60,
     pool_size=settings.POOL_SIZE,
@@ -22,8 +26,17 @@ def get_db() -> Generator[Session, None, None]:
     db = SessionLocal()
     try:
         yield db
+    except Exception:
+        try:
+            db.rollback()
+        except Exception:
+            pass
+        raise
     finally:
-        db.close()
+        try:
+            db.close()
+        except Exception:
+            pass
 
 def check_db_health() -> bool:
     try:

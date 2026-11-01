@@ -337,6 +337,8 @@ def grade_and_record_attempt(
             enqueue_lesson_generation(
                 db, owner_id=owner_id, path=path, lessons=[new_lesson]
             )
+            from app.services.pipeline_runner import notify_pipeline
+            notify_pipeline()
             remediation_injected = True
 
             next_action["remediationInjected"] = True

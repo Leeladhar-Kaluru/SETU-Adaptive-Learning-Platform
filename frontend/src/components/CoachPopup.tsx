@@ -1,6 +1,6 @@
 import React, { useEffect, useRef } from 'react';
-import { X, Sparkles, Target, BookOpen, Lightbulb, ArrowRight } from 'lucide-react';
-import type { CoachCard } from '../services/api';
+import { X, Sparkles, Target, BookOpen, Lightbulb, ArrowRight, Brain } from 'lucide-react';
+import type { CoachCard, PersonalCoachNote } from '../services/api';
 import styles from './CoachPopup.module.css';
 
 interface CoachPopupProps {
@@ -8,6 +8,8 @@ interface CoachPopupProps {
   onClose: () => void;
   onContinue?: () => void;
   continueLabel?: string;
+  personalNote?: PersonalCoachNote | null;
+  personalNotePending?: boolean;
 }
 
 export const CoachPopup: React.FC<CoachPopupProps> = ({
@@ -15,6 +17,8 @@ export const CoachPopup: React.FC<CoachPopupProps> = ({
   onClose,
   onContinue,
   continueLabel,
+  personalNote,
+  personalNotePending,
 }) => {
   const closeRef = useRef<HTMLButtonElement>(null);
 
@@ -107,6 +111,29 @@ export const CoachPopup: React.FC<CoachPopupProps> = ({
             <span className={styles.blockLabel}>Next step</span>
             <strong>{card.nextStep.title}</strong>
             {card.nextStep.reason && <p>{card.nextStep.reason}</p>}
+          </div>
+        )}
+
+        {personalNotePending && !personalNote && (
+          <div className={styles.personalNote}>
+            <span className={styles.blockLabel}>
+              <Brain size={12} /> SETU is analyzing your last answers…
+            </span>
+            <p>This note is written from your real attempts, so it takes a few seconds.</p>
+          </div>
+        )}
+
+        {personalNote && (
+          <div className={styles.personalNote}>
+            <span className={styles.blockLabel}>
+              <Brain size={12} /> Personal coach note · from your last {personalNote.analyzedAttempts} attempts
+            </span>
+            <strong>{personalNote.headline}</strong>
+            <p>{personalNote.body}</p>
+            <div className={styles.personalTip}>
+              <span className={styles.blockLabel}>{personalNote.studyTipTitle}</span>
+              <p>{personalNote.studyTipBody}</p>
+            </div>
           </div>
         )}
 

@@ -16,7 +16,14 @@ import { useAuth } from '../context/AuthContext';
 import { db, getAllDoubts, queueDoubtOffline, type OfflineDoubt } from '../db/indexedDB';
 import { syncManager } from '../services/syncManager';
 import { useDialogFocus } from '../hooks/useDialogFocus';
+import { AuthModal } from './AuthModal';
 import styles from './AskSetu.module.css';
+
+export function openAskSetu(): void {
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent('open-ask-setu'));
+  }
+}
 
 type Citation = {
   citationId?: string;
@@ -71,6 +78,7 @@ export const AskSetu: React.FC = () => {
   const navigate = useNavigate();
   const location = useLocation();
   const [isOpen, setIsOpen] = useState(false);
+  const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
   const [question, setQuestion] = useState('');
   const [entries, setEntries] = useState<ChatEntry[]>([]);
   const [busy, setBusy] = useState(false);
@@ -84,6 +92,28 @@ export const AskSetu: React.FC = () => {
   const wasSyncingRef = useRef(false);
 
   const pathId = new URLSearchParams(location.search).get('pathId') || undefined;
+  const [activePath, setActivePath] = useState<{ id: string; title: string; sourceTitle?: string } | null>(null);
+
+  useEffect(() => {
+    if (!user) return;
+    let isMounted = true;
+    api.getLearningPaths()
+      .then((paths) => {
+        if (!isMounted || !paths || paths.length === 0) return;
+        const matched = pathId ? paths.find((p) => p.id === pathId) : paths[0];
+        if (matched) {
+          setActivePath({
+            id: matched.id,
+            title: matched.title,
+            sourceTitle: matched.sourceTitle || matched.title,
+          });
+        }
+      })
+      .catch(() => {});
+    return () => {
+      isMounted = false;
+    };
+  }, [user, pathId]);
 
   useDialogFocus(dialogRef, isOpen, () => setIsOpen(false));
 
@@ -127,22 +157,44 @@ export const AskSetu: React.FC = () => {
     threadEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
   }, [entries, busy]);
 
-  if (!user || user.role === 'teacher') return null;
+  useEffect(() => {
+    const handleOpen = () => {
+      if (!user) {
+        setIsAuthModalOpen(true);
+      } else {
+        setIsOpen(true);
+      }
+    };
+    window.addEventListener('open-ask-setu', handleOpen);
+    return () => window.removeEventListener('open-ask-setu', handleOpen);
+  }, [user]);
 
-  const submit = async () => {
-    const text = question.trim();
-    if (text.length < 3 || busy) return;
+  if (user?.role === 'teacher') return null;
+
+  const submit = async (overrideText?: string) => {
+    if (!user) {
+      setIsAuthModalOpen(true);
+      return;
+    }
+    const text = (overrideText !== undefined ? overrideText : question).trim();
+    if (text.length < 1 || busy) return;
     const clientDoubtId = makeId();
+    const effectivePathId = pathId || activePath?.id;
     setBusy(true);
     setError(null);
     setQuestion('');
+
+    // Safety watchdog: ensure busy never stays permanently stuck
+    const safetyTimer = window.setTimeout(() => {
+      setBusy(false);
+    }, 20000);
 
     if (!navigator.onLine) {
       try {
         await queueDoubtOffline({
           clientDoubtId,
           ownerId: user.id,
-          pathId: pathId || '',
+          pathId: effectivePathId || '',
           questionText: text,
         });
         await syncManager.refreshPending();
@@ -172,14 +224,14 @@ export const AskSetu: React.FC = () => {
       const result = await api.askDoubt({
         clientDoubtId,
         questionText: text,
-        ...(pathId ? { pathId } : {}),
+        ...(effectivePathId ? { pathId: effectivePathId } : {}),
       });
       const payload = result.answerJson || {};
       if (result.status === 'answered' && payload.answer) {
         await queueDoubtOffline({
           clientDoubtId,
           ownerId: user.id,
-          pathId: pathId || '',
+          pathId: effectivePathId || '',
           questionText: text,
         });
         await db.doubtOutbox.update(clientDoubtId, {
@@ -214,6 +266,7 @@ export const AskSetu: React.FC = () => {
       }
       setQuestion(text);
     } finally {
+      window.clearTimeout(safetyTimer);
       setBusy(false);
     }
   };
@@ -223,13 +276,23 @@ export const AskSetu: React.FC = () => {
       <button
         type="button"
         className={styles.launcher}
-        onClick={() => setIsOpen(true)}
+        onClick={() => {
+          if (!user) {
+            setIsAuthModalOpen(true);
+          } else {
+            setIsOpen(true);
+          }
+        }}
         aria-label="Ask SETU a question"
       >
         <span className={styles.launcherGlow} aria-hidden="true" />
         <MessageCircleQuestion size={19} />
         <span>Ask SETU</span>
       </button>
+
+      {isAuthModalOpen && (
+        <AuthModal isOpen={isAuthModalOpen} onClose={() => setIsAuthModalOpen(false)} />
+      )}
 
       {isOpen && (
         <div className={styles.overlay} onMouseDown={(event) => {
@@ -252,6 +315,12 @@ export const AskSetu: React.FC = () => {
                   Answers from your books show the exact page. General questions are
                   answered honestly and labeled.
                 </p>
+                {activePath && (
+                  <div style={{ marginTop: '0.45rem', display: 'inline-flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.78rem', background: 'rgba(255, 255, 255, 0.18)', padding: '0.2rem 0.55rem', borderRadius: '4px', maxWidth: '100%', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                    <BookOpen size={13} style={{ flexShrink: 0 }} />
+                    <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>Studying: <strong>{activePath.sourceTitle || activePath.title}</strong></span>
+                  </div>
+                )}
               </div>
               <button
                 type="button"
@@ -404,7 +473,7 @@ export const AskSetu: React.FC = () => {
               <button
                 type="submit"
                 className={styles.send}
-                disabled={busy || question.trim().length < 3}
+                disabled={busy || question.trim().length === 0}
                 aria-label="Send question"
               >
                 {busy ? <Loader2 size={17} className={styles.spin} /> : <Send size={17} />}

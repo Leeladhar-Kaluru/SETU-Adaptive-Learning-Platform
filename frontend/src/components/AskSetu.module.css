@@ -264,6 +264,8 @@
   font-size: 13.5px;
   line-height: 1.65;
   color: var(--ink-primary);
+  white-space: pre-line;
+  word-break: break-word;
 }
 
 .answerNotice {

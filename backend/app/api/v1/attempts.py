@@ -61,6 +61,7 @@ def submit_attempt(
     personal_coach: Optional[str] = None
     if outcome.concept_ids and not outcome.already_recorded:
         from app.services.coach_notes import enqueue_coach_note
+        from app.services.pipeline_runner import notify_pipeline
 
         try:
             enqueue_coach_note(
@@ -75,6 +76,7 @@ def submit_attempt(
                 elapsed_seconds=req.elapsed_seconds,
             )
             personal_coach = "queued"
+            notify_pipeline()
         except Exception:
             personal_coach = None
 

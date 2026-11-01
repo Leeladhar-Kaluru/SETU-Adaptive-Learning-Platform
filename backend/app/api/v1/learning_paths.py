@@ -12,6 +12,7 @@ from app.models.documents import Document, DocumentChunk, DocumentPage
 from app.models.learning import LearningPath, PathLesson, LessonVersion
 from app.services.generation_queue import enqueue_lesson_generation, requeue_failed_lessons
 from app.services.lesson_generator import lesson_generator_service
+from app.services.pipeline_runner import notify_pipeline
 from app.services.text_sanitize import sanitize_tree
 
 router = APIRouter()
@@ -189,7 +190,13 @@ def create_learning_path(
     seq = 1
     created_lessons = []
     for chapter in chapters:
-        lesson_title = chapter.get("chapterTitle") or f"Section {seq}"
+        lesson_title = (
+            chapter.get("title")
+            or chapter.get("chapterTitle")
+            or chapter.get("name")
+            or chapter.get("heading")
+            or f"Lesson {seq}"
+        )
         plesson = PathLesson(
             path_id=path.id,
             lesson_key=f"lesson_{seq}",
@@ -208,6 +215,7 @@ def create_learning_path(
 
     first_lesson = created_lessons[0]
     enqueue_lesson_generation(db, owner_id=owner_id, path=path, lessons=created_lessons)
+    notify_pipeline()
 
     return {
         "pathId": str(path.id),
@@ -271,9 +279,12 @@ def requeue_failed_path_lessons(
     path = db.query(LearningPath).filter(LearningPath.id == path_id, LearningPath.owner_id == owner_id).first()
     if not path:
         raise HTTPException(status_code=404, detail="Learning path not found")
+    requeued = requeue_failed_lessons(db, owner_id=owner_id, path=path)
+    if requeued > 0:
+        notify_pipeline()
     return {
         "pathId": str(path.id),
-        "requeuedJobs": requeue_failed_lessons(db, owner_id=owner_id, path=path),
+        "requeuedJobs": requeued,
     }
 
 @router.get("/{path_id}")

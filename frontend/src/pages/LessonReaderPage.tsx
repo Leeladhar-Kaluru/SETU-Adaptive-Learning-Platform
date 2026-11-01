@@ -629,7 +629,7 @@ export const LessonReaderPage: React.FC = () => {
           {lessonPackage.blocks?.map((block: any) => (
             <section key={block.blockId} className={styles.blockSection}>
               <h2 className={styles.blockHeading}>{block.heading}</h2>
-              <p className={styles.blockContent}>
+              <div className={styles.blockContent}>
                 {block.content}
                 {block.sourceRefs?.map((ref: any, rIdx: number) => (
                   <button
@@ -642,7 +642,7 @@ export const LessonReaderPage: React.FC = () => {
                     <FileSearch size={11} /> Page {ref.pageStart}
                   </button>
                 ))}
-              </p>
+              </div>
 
               <div className={styles.doubtPromptBar}>
                 <span className={styles.doubtText}>Have a question on this section?</span>

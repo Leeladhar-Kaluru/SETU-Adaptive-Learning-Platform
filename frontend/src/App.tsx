@@ -12,6 +12,7 @@ import { DoubtQueuePage } from './pages/DoubtQueuePage';
 import { TeacherDashboardPage } from './pages/TeacherDashboardPage';
 import { StudentDashboardPage } from './pages/StudentDashboardPage';
 import { NotFoundPage } from './pages/NotFoundPage';
+import { ErrorBoundary } from './components/ErrorBoundary';
 import styles from './App.module.css';
 
 const StudentOnly: React.FC<{ children: ReactNode }> = ({ children }) => {
@@ -44,50 +45,52 @@ const AppContent: React.FC = () => {
             </div>
           </section>
         ) : (
-          <Routes>
-            <Route path="/" element={<StudentOnly><HomePage /></StudentOnly>} />
-            <Route
-              path="/dashboard"
-              element={
-                <AuthGate>
-                  <StudentOnly><StudentDashboardPage /></StudentOnly>
-                </AuthGate>
-              }
-            />
-            <Route
-              path="/lesson/:lessonId"
-              element={
-                <AuthGate>
-                  <StudentOnly><LessonReaderPage /></StudentOnly>
-                </AuthGate>
-              }
-            />
-            <Route
-              path="/library"
-              element={
-                <AuthGate>
-                  <StudentOnly><OfflineLibraryPage /></StudentOnly>
-                </AuthGate>
-              }
-            />
-            <Route
-              path="/doubts"
-              element={
-                <AuthGate>
-                  <StudentOnly><DoubtQueuePage /></StudentOnly>
-                </AuthGate>
-              }
-            />
-            <Route
-              path="/teacher"
-              element={
-                <AuthGate teacherOnly>
-                  <TeacherDashboardPage />
-                </AuthGate>
-              }
-            />
-            <Route path="*" element={<NotFoundPage />} />
-          </Routes>
+          <ErrorBoundary>
+            <Routes>
+              <Route path="/" element={<StudentOnly><HomePage /></StudentOnly>} />
+              <Route
+                path="/dashboard"
+                element={
+                  <AuthGate>
+                    <StudentOnly><StudentDashboardPage /></StudentOnly>
+                  </AuthGate>
+                }
+              />
+              <Route
+                path="/lesson/:lessonId"
+                element={
+                  <AuthGate>
+                    <StudentOnly><LessonReaderPage /></StudentOnly>
+                  </AuthGate>
+                }
+              />
+              <Route
+                path="/library"
+                element={
+                  <AuthGate>
+                    <StudentOnly><OfflineLibraryPage /></StudentOnly>
+                  </AuthGate>
+                }
+              />
+              <Route
+                path="/doubts"
+                element={
+                  <AuthGate>
+                    <StudentOnly><DoubtQueuePage /></StudentOnly>
+                  </AuthGate>
+                }
+              />
+              <Route
+                path="/teacher"
+                element={
+                  <AuthGate teacherOnly>
+                    <TeacherDashboardPage />
+                  </AuthGate>
+                }
+              />
+              <Route path="*" element={<NotFoundPage />} />
+            </Routes>
+          </ErrorBoundary>
         )}
       </main>
       <AskSetu />

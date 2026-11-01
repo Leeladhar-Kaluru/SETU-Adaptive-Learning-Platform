@@ -561,6 +561,44 @@ export interface AttemptResult {
   };
   coaching?: CoachCard | null;
   alreadyRecorded: boolean;
+  personalCoach?: 'queued' | null;
+  conceptId?: string | null;
+}
+
+export interface PersonalCoachNote {
+  headline: string;
+  body: string;
+  studyTipTitle: string;
+  studyTipBody: string;
+  analyzedAttempts: number;
+}
+
+export interface CoachNoteResponse {
+  status: 'ready' | 'pending' | 'none';
+  note?: { id: string; conceptId: string; content: PersonalCoachNote; completedAt: string } | null;
+}
+
+export interface MyClassroomEntry {
+  id: string;
+  name: string;
+  grade: number;
+  subjectScope: string;
+  boardId: string | null;
+  role: 'teacher' | 'student' | 'co_teacher';
+  joinCode: string | null;
+  teacherId: string;
+  teacherName: string;
+}
+
+export interface ClassroomChatMessage {
+  id: string;
+  classroomId: string;
+  senderId: string;
+  senderName: string;
+  kind: 'group' | 'direct';
+  recipientId: string | null;
+  body: string;
+  createdAt: string;
 }
 
 export class ApiError extends Error {
@@ -578,7 +616,7 @@ export function authHeaders(): Record<string, string> {
   return token ? { Authorization: `Bearer ${token}` } : {};
 }
 
-const REQUEST_TIMEOUT_MS = 8000;
+const REQUEST_TIMEOUT_MS = 120000;
 const RETRYABLE_STATUSES = new Set([502, 503, 504]);
 
 async function fetchOnce(endpoint: string, options: RequestInit): Promise<Response> {
@@ -914,6 +952,34 @@ export const api = {
 
   async getStudyPlan(): Promise<StudyPlan> {
     return request<StudyPlan>('/study/plan');
+  },
+
+  async fetchCoachNote(conceptId: string): Promise<CoachNoteResponse> {
+    return request<CoachNoteResponse>(`/study/coach-note/${encodeURIComponent(conceptId)}`);
+  },
+
+  async myClassrooms(): Promise<MyClassroomEntry[]> {
+    const res = await request<{ classrooms: MyClassroomEntry[] }>('/classroom/me');
+    return res.classrooms || [];
+  },
+
+  async getClassroomMessages(classroomId: string, after?: string): Promise<ClassroomChatMessage[]> {
+    const query = after ? `?after=${encodeURIComponent(after)}` : '';
+    const res = await request<{ messages: ClassroomChatMessage[] }>(
+      `/classroom/${classroomId}/messages${query}`
+    );
+    return res.messages || [];
+  },
+
+  async sendClassroomMessage(
+    classroomId: string,
+    data: { body: string; kind: 'group' | 'direct'; recipientId?: string }
+  ): Promise<ClassroomChatMessage> {
+    const res = await request<{ message: ClassroomChatMessage }>(
+      `/classroom/${classroomId}/messages`,
+      { method: 'POST', body: JSON.stringify(data) }
+    );
+    return res.message;
   },
 
   async getLessonCoaching(lessonId: string): Promise<LessonCoaching> {

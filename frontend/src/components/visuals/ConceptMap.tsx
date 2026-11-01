@@ -8,7 +8,7 @@ interface Node {
 
 interface ConceptMapProps {
   nodes?: Node[];
-  edges?: [string, string][];
+  edges?: any[];
   altText?: string;
 }
 
@@ -57,7 +57,17 @@ export const ConceptMap: React.FC<ConceptMapProps> = ({
         </defs>
 
         {/* Edges */}
-        {edges.map(([fromId, toId], idx) => {
+        {Array.isArray(edges) && edges.map((edge: any, idx: number) => {
+          let fromId = '';
+          let toId = '';
+          if (Array.isArray(edge)) {
+            fromId = String(edge[0] || '');
+            toId = String(edge[1] || '');
+          } else if (edge && typeof edge === 'object') {
+            fromId = String(edge.source || edge.from || edge.fromId || '');
+            toId = String(edge.target || edge.to || edge.toId || '');
+          }
+          if (!fromId || !toId) return null;
           const from = nodeCoords[fromId];
           const to = nodeCoords[toId];
           if (!from || !to) return null;
