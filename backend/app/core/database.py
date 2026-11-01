@@ -3,20 +3,16 @@ from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker, Session
 from app.core.config import settings
 
-# Supabase's session-mode pooler caps the whole project at 15 clients. The API
-# handles dashboard bursts (profile, documents, paths, study, catalogue in
-# parallel) and uploads that hold a connection during the storage save, so give
-# it room to breathe: 8 + 4 overflow = 12 worst case, worker typically 1-2,
-# all below the 15-client cap. Fail after a short wait instead of queueing
-# indefinitely; sync endpoints run in FastAPI's thread pool, so this wait never
-# blocks the event loop.
+# Supabase's session-mode pooler caps the whole project at 15 clients. Each
+# process keeps a small pool (API 4+2, worker 2+1 via POOL_SIZE env) so the
+# API, the worker, and short-lived scripts never exhaust the shared cap.
 engine = create_engine(
     settings.DATABASE_URL,
     pool_pre_ping=True,
     pool_recycle=300,
-    pool_size=8,
-    max_overflow=4,
-    pool_timeout=30,
+    pool_size=settings.POOL_SIZE,
+    max_overflow=settings.MAX_OVERFLOW,
+    pool_timeout=settings.POOL_TIMEOUT,
     pool_use_lifo=True,
 )
 
