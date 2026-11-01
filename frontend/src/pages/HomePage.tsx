@@ -1,14 +1,16 @@
 import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Upload, Sparkles, Target, Brain, Clock3, Play, BookOpen, ArrowRight } from 'lucide-react';
+import { Sparkles, Target, Brain, Clock3, Play, BookOpen } from 'lucide-react';
 import { api, LearningPathItem, IngestionStatus, UserDocument, StudyPlan, LearnerInsights, SmartCheckQuestion, AttemptResult } from '../services/api';
 import { useAuth } from '../context/AuthContext';
-import { AuthModal } from '../components/AuthModal';
-import { DynamicActivityIndicator, ActivityPhase } from '../components/DynamicActivityIndicator';
+import { ActivityPhase } from '../components/DynamicActivityIndicator';
 import { saveLessonOffline } from '../db/indexedDB';
-import { GRADES, gradeLabel } from '../lib/academic';
 import { useDialogFocus } from '../hooks/useDialogFocus';
 import { useTaxonomy } from '../hooks/useTaxonomy';
+import { WelcomeHero } from './home/WelcomeHero';
+import { PlanReviewDialog } from './home/PlanReviewDialog';
+import { AddSourcePanel } from './home/AddSourcePanel';
+import { StudyRecordPanel } from './home/StudyRecordPanel';
 import styles from './HomePage.module.css';
 
 const normalizeLabel = (value: string) =>
@@ -18,6 +20,14 @@ const normalizeLabel = (value: string) =>
     .trim();
 
 const escapeRegExp = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+const subjectHue = (subjectId: string): number => {
+  let hash = 0;
+  for (let i = 0; i < subjectId.length; i += 1) {
+    hash = (hash * 31 + subjectId.charCodeAt(i)) % 360;
+  }
+  return hash;
+};
 
 export const HomePage: React.FC = () => {
   const navigate = useNavigate();
@@ -551,7 +561,6 @@ export const HomePage: React.FC = () => {
     (lesson) => lesson.status === 'queued' || lesson.status === 'generating'
   ).length;
   const failedCount = lessons.filter((lesson) => lesson.status === 'failed').length;
-  const outlineChapters = reviewOutline?.chapters || [];
 
   const deskSummary = plan
     ? [
@@ -654,122 +663,12 @@ export const HomePage: React.FC = () => {
 
   if (!user) {
     return (
-      <div className={styles.welcomeContainer}>
-        <section className={styles.welcomeHero}>
-          <div className={styles.welcomeCopy}>
-            <span className={styles.welcomeBadge}>Built for classes 6–10</span>
-            <h1 className={styles.welcomeTitle}>
-              Your books.
-              <br />
-              <span className={styles.welcomeTitleAccent}>Your pace.</span> Your next step.
-            </h1>
-            <p className={styles.welcomeSubtitle}>
-              SETU turns the textbooks and notes you already own into lessons, practice and
-              grounded answers — then adapts to what you actually get right.
-            </p>
-            <div className={styles.welcomeActions}>
-              <button
-                type="button"
-                className={styles.welcomePrimaryBtn}
-                onClick={openTour}
-              >
-                Get Started <ArrowRight size={17} />
-              </button>
-              <button
-                type="button"
-                className={styles.welcomeSecondaryBtn}
-                onClick={() => setIsAuthModalOpen(true)}
-              >
-                I have an account
-              </button>
-            </div>
-            <ul className={styles.welcomeTrust} aria-label="What SETU offers">
-              <li>Source-grounded answers</li>
-              <li>Works offline</li>
-              <li>Adapts to your evidence</li>
-            </ul>
-          </div>
-
-          <div className={styles.welcomeArt} aria-hidden="true">
-            <div className={styles.artCardBack} />
-            <div className={styles.artCard}>
-              <span className={styles.artTag}>Unit 01</span>
-              <strong>Your chapter</strong>
-              <span className={styles.artLine} />
-              <span className={styles.artLineShort} />
-              <div className={styles.artChips}>
-                <span>Read</span>
-                <span>Practice</span>
-                <span>Checkpoint</span>
-              </div>
-            </div>
-            <div className={styles.artBubble}>
-              <Sparkles size={15} /> Page-cited
-            </div>
-            <div className={styles.artStar} />
-          </div>
-        </section>
-
-        <section className={styles.welcomeSteps} aria-label="How SETU works">
-          <div className={styles.stepsIntro}>
-            <span className={styles.eyebrow}>The desk routine</span>
-            <h2 className={styles.stepsTitle}>From a source you own to evidence you can see.</h2>
-          </div>
-          <ol className={styles.stepSequence}>
-            <li className={styles.welcomeStep}>
-              <span className={styles.stepNumber}>01</span>
-              <div className={styles.stepBody}>
-                <h3 className={styles.stepTitle}>Add a source</h3>
-                <p className={styles.stepText}>
-                  Upload a PDF, DOCX, PPTX, text file, or page image you have the right to use.
-                  SETU keeps the original and indexes the pages it can read.
-                </p>
-              </div>
-            </li>
-            <li className={styles.welcomeStep}>
-              <span className={styles.stepNumber}>02</span>
-              <div className={styles.stepBody}>
-                <h3 className={styles.stepTitle}>Review the plan</h3>
-                <p className={styles.stepText}>
-                  Check the chapters found in the source, then choose the class and subject.
-                  Units are generated only after you approve the plan.
-                </p>
-              </div>
-            </li>
-            <li className={styles.welcomeStep}>
-              <span className={styles.stepNumber}>03</span>
-              <div className={styles.stepBody}>
-                <h3 className={styles.stepTitle}>Learn, solve, test</h3>
-                <p className={styles.stepText}>
-                  Read explanations with page citations, work through guided practice with
-                  progressive hints, then take a checkpoint without hints.
-                </p>
-              </div>
-            </li>
-            <li className={styles.welcomeStep}>
-              <span className={styles.stepNumber}>04</span>
-              <div className={styles.stepBody}>
-                <h3 className={styles.stepTitle}>Ask and return</h3>
-                <p className={styles.stepText}>
-                  Ask doubts grounded in the source. Save ready lessons for offline study;
-                  answers and attempts queued on this device sync when you reconnect.
-                </p>
-              </div>
-            </li>
-          </ol>
-          <aside className={styles.deskNote}>
-            <span className={styles.deskNoteOrb} aria-hidden="true" />
-            <h2 className={styles.deskNoteTitle}>No invented evidence</h2>
-            <p className={styles.deskNoteText}>
-              Lessons cite the pages they came from. If a page cannot be read, SETU names it
-              instead of filling the gap. If the source does not contain enough evidence,
-              an answer says so.
-            </p>
-          </aside>
-        </section>
-
-        <AuthModal isOpen={isAuthModalOpen} onClose={() => setIsAuthModalOpen(false)} />
-      </div>
+      <WelcomeHero
+        openTour={openTour}
+        isAuthModalOpen={isAuthModalOpen}
+        onOpenAuth={() => setIsAuthModalOpen(true)}
+        onCloseAuth={() => setIsAuthModalOpen(false)}
+      />
     );
   }
 
@@ -855,6 +754,11 @@ export const HomePage: React.FC = () => {
                     <li
                       key={task.id}
                       data-subject={task.subjectId}
+                      style={
+                        {
+                          '--task-hue': task.subjectId ? subjectHue(task.subjectId) : 252,
+                        } as React.CSSProperties
+                      }
                       className={`${styles.planTask} ${
                         task.kind === 'remediate' || task.kind === 'review'
                           ? styles.planTaskFocus
@@ -898,7 +802,16 @@ export const HomePage: React.FC = () => {
               {studyPlan.books.length > 0 && (
                 <div className={styles.bookMix} aria-label="Books in this plan">
                   {studyPlan.books.map((book) => (
-                    <span key={book.pathId} className={styles.bookMixItem}>
+                    <span
+                      key={book.pathId}
+                      className={styles.bookMixItem}
+                      style={
+                        {
+                          '--task-hue': book.subjectId ? subjectHue(book.subjectId) : 252,
+                        } as React.CSSProperties
+                      }
+                    >
+                      <span className={styles.bookMixDot} aria-hidden="true" />
                       <span>{book.subjectLabel}</span>
                       {book.readyLessons}/{book.totalLessons} ready
                     </span>
@@ -1225,295 +1138,63 @@ export const HomePage: React.FC = () => {
           <h2>Add a source</h2>
           {currentBook && <span className={styles.sectionNote}>Current source</span>}
         </div>
-        <input ref={fileInputRef} type="file" hidden accept=".pdf,.docx,.pptx,.txt,.md,.png,.jpg,.jpeg" onChange={handleFileChange} />
-        <button
-          type="button"
-          className={`${styles.drop} ${isDragging ? styles.dropOn : ''}`}
+        <AddSourcePanel
+          fileInputRef={fileInputRef}
+          isDragging={isDragging}
+          isUploading={isUploading}
+          showPipelineProgress={showPipelineProgress}
+          pipeline={pipeline}
+          activePipelineIndex={activePipelineIndex}
+          progressPercent={progressPercent}
+          currentBookFilename={currentBook?.filename}
+          activityPhase={activityPhase}
+          activityDetail={activityDetail}
           onDragOver={handleDragOver}
           onDragLeave={handleDragLeave}
           onDrop={handleDrop}
-          onClick={() => fileInputRef.current?.click()}
-        >
-          <Upload size={22} />
-          <span>Choose a PDF, DOCX, PPTX, TXT, MD, or image. Up to 50MB.</span>
-        </button>
-        {showPipelineProgress ? (
-          <>
-            <p className={styles.pipelineCaption}>
-              {isUploading ? 'A source is moving through the desk.' : `Source progress for ${currentBook?.filename}.`}
-            </p>
-            <ol className={styles.pipeline}>
-              {pipeline.map((step, index) => {
-                const state =
-                  index < activePipelineIndex ? 'done' : index === activePipelineIndex ? 'now' : 'waiting';
-                return (
-                  <li
-                    key={step.id}
-                    className={
-                      state === 'done' ? styles.stepDone : state === 'now' ? styles.stepNow : undefined
-                    }
-                  >
-                    <span>{state === 'done' ? 'Done' : state === 'now' ? 'Now' : 'Waiting'}</span>
-                    {step.label}
-                    {step.id === 'upload' && state === 'now' && typeof progressPercent === 'number'
-                      ? ` · ${progressPercent}%`
-                      : ''}
-                  </li>
-                );
-              })}
-            </ol>
-          </>
-        ) : (
-          <p className={styles.meta}>
-            A source moves through upload, storage, page reading, indexing, and your review
-            before any unit is generated.
-          </p>
-        )}
-        {isUploading && (
-          <DynamicActivityIndicator
-            phase={activityPhase}
-            detail={activityDetail}
-            progressPercent={progressPercent}
-            onCancel={() => {
-              uploadRequestRef.current?.abort();
-              if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
-              setIsUploading(false);
-              setProgressPercent(undefined);
-            }}
-          />
-        )}
+          onFileChange={handleFileChange}
+          onCancel={() => {
+            uploadRequestRef.current?.abort();
+            if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
+            setIsUploading(false);
+            setProgressPercent(undefined);
+          }}
+        />
       </section>
 
       <section className={styles.panel}>
         <h2>Study record</h2>
-        {studySummary && (studySummary.minutesStudied > 0 || studySummary.checkpointCount > 0) ? (
-          <>
-            <p className={styles.meta}>
-              {studySummary.minutesStudied} minutes recorded
-              {studySummary.readingTitle ? ` · Last opened: ${studySummary.readingTitle}` : ''}
-              {studySummary.accuracyRate !== null ? ` · Checks ${Math.round(studySummary.accuracyRate * 100)}%` : ' · No checks yet'}
-              {studySummary.improvement === 'improving' ? ' · Recent checks are stronger than earlier ones.' : ''}
-              {studySummary.improvement === 'needs_support' ? ' · Recent checks were harder. Stay with the current unit.' : ''}
-            </p>
-            <div className={styles.heatmap} aria-label="Study time for the last seven days">
-              {studySummary.heatmap.map((day) => (
-                <div key={day.date} title={`${day.date}: ${Math.round(day.seconds / 60)} min`}>
-                  <span style={{ height: `${Math.min(100, Math.max(day.seconds ? 12 : 0, Math.round(day.seconds / 36)))}%` }} />
-                </div>
-              ))}
-            </div>
-          </>
-        ) : (
-          <p className={styles.meta}>Nothing has been studied yet. Time and check results appear after you open a unit.</p>
-        )}
-        {studySummary?.suggestions?.length ? (
-          <ul className={styles.notes}>
-            {studySummary.suggestions.map((item) => (
-              <li key={item.id} className={styles.suggestion}>
-                <div className={styles.suggestionHead}>
-                  <strong>{item.teacherName || 'Your teacher'}</strong>
-                  {item.conceptId && (
-                    <span className={styles.suggestionTopic}>
-                      {item.conceptId.replace(/^concept[-_]/, '').replace(/[-_]/g, ' ')}
-                    </span>
-                  )}
-                </div>
-                {item.explanation && (
-                  <p className={styles.suggestionExplanation}>{item.explanation}</p>
-                )}
-                <p className={styles.suggestionNote}>{item.note}</p>
-                {suggestionErrors[item.id] && (
-                  <p className={styles.bad} role="alert">
-                    {suggestionErrors[item.id]}{' '}
-                    <button
-                      type="button"
-                      className={styles.inlineRetry}
-                      onClick={() => void respondToSuggestion(item.id, 'accept')}
-                      disabled={respondingSuggestionId === item.id}
-                    >
-                      Retry
-                    </button>
-                  </p>
-                )}
-                <div className={styles.suggestionActions}>
-                  <button
-                    type="button"
-                    className={styles.suggestionAccept}
-                    onClick={() => void respondToSuggestion(item.id, 'accept')}
-                    disabled={respondingSuggestionId === item.id}
-                  >
-                    {respondingSuggestionId === item.id ? 'Saving…' : 'Accept'}
-                  </button>
-                  <button
-                    type="button"
-                    className={styles.suggestionDismiss}
-                    onClick={() => void respondToSuggestion(item.id, 'dismiss')}
-                    disabled={respondingSuggestionId === item.id}
-                  >
-                    Dismiss
-                  </button>
-                </div>
-              </li>
-            ))}
-          </ul>
-        ) : null}
+        <StudyRecordPanel
+          studySummary={studySummary}
+          suggestionErrors={suggestionErrors}
+          respondingSuggestionId={respondingSuggestionId}
+          onRespond={(id, decision) => void respondToSuggestion(id, decision)}
+        />
       </section>
 
       {reviewOutline && (
-        <div className={styles.modalBackdrop}>
-          <div
-            className={`${styles.modalContent} ${styles.planDialog}`}
-            ref={planDialogRef}
-            tabIndex={-1}
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="plan-dialog-title"
-          >
-            <header className={styles.dialogHead}>
-              <div className={styles.dialogHeading}>
-                <span className={styles.dialogKicker}>Source review</span>
-                <h2 id="plan-dialog-title">{reviewOutline.filename}</h2>
-                <p className={styles.dialogMeta}>
-                  {reviewOutline.pageCount || 0} pages · {reviewOutline.chunkCount || 0} indexed sections
-                </p>
-              </div>
-              <button
-                type="button"
-                className={styles.dialogClose}
-                aria-label="Close plan review"
-                onClick={() => {
-                  if (isGeneratingPath) return;
-                  setReviewOutline(null);
-                  setReviewError(null);
-                }}
-                disabled={isGeneratingPath}
-              >
-                ×
-              </button>
-            </header>
-
-            {(reviewError ||
-              reviewOutline.outlineMessage ||
-              (typeof reviewOutline.pagesNeedingOcr === 'number' && reviewOutline.pagesNeedingOcr > 0)) && (
-              <div className={styles.dialogAlerts}>
-                {reviewError && <p className={styles.bad} role="alert">{reviewError}</p>}
-                {reviewOutline.outlineMessage && (
-                  <p className={styles.bad} role="alert">{reviewOutline.outlineMessage}</p>
-                )}
-                {typeof reviewOutline.pagesNeedingOcr === 'number' && reviewOutline.pagesNeedingOcr > 0 && (
-                  <p className={styles.bad}>
-                    {reviewOutline.pagesNeedingOcr}{' '}
-                    {reviewOutline.pagesNeedingOcr === 1 ? 'page' : 'pages'} could not be read after text
-                    extraction and OCR. Those pages are not indexed and will not appear in your lessons.
-                  </p>
-                )}
-              </div>
-            )}
-
-            <div className={styles.dialogBody}>
-              <section className={styles.dialogSetup} aria-label="Plan settings">
-                <div className={styles.dialogCount}>
-                  <span>Outline found</span>
-                  <strong>
-                    {outlineChapters.length} {outlineChapters.length === 1 ? 'chapter' : 'chapters'}
-                  </strong>
-                </div>
-                <p className={styles.dialogHint}>
-                  Check the chapters on the right, then choose the class and subject for this book.
-                  Units are generated only after you approve the plan.
-                </p>
-                <div className={styles.contextRow}>
-                  <label className={styles.contextField}>
-                    Class
-                    <select value={pathGrade} onChange={(e) => setPathGrade(e.target.value)}>
-                      <option value="">Select class</option>
-                      {GRADES.map((grade) => (
-                        <option key={grade} value={grade}>{gradeLabel(grade)}</option>
-                      ))}
-                    </select>
-                  </label>
-                  <label className={styles.contextField}>
-                    Subject
-                    <select
-                      value={pathSubject}
-                      onChange={(e) => setPathSubject(e.target.value)}
-                      disabled={taxonomy.loading || subjectOptions.length === 0}
-                    >
-                      <option value="">
-                        {taxonomy.loading
-                          ? 'Loading subjects…'
-                          : subjectOptions.length > 0
-                            ? 'Select subject'
-                            : 'No subjects available'}
-                      </option>
-                      {subjectOptions.map((option) => (
-                        <option key={option.id} value={option.id}>{option.label}</option>
-                      ))}
-                    </select>
-                  </label>
-                </div>
-                {taxonomy.error && (
-                  <div className={styles.dialogInlineError}>
-                    <span>{taxonomy.error}</span>
-                    <button type="button" onClick={taxonomy.retry}>Retry</button>
-                  </div>
-                )}
-                {!taxonomy.loading && !taxonomy.error && subjectOptions.length === 0 && (
-                  <p className={styles.bad}>
-                    No subjects are configured in the catalogue. Add a subject before building a plan.
-                  </p>
-                )}
-                {!taxonomy.loading && !taxonomy.error && subjectOptions.length > 0 && (!pathGrade || !pathSubject) && (
-                  <p className={styles.contextNote}>Choose a class and subject to continue.</p>
-                )}
-              </section>
-
-              <section className={styles.dialogChapters} aria-label="Chapters found">
-                <div className={styles.dialogChapterHead}>
-                  <h3>Chapters found</h3>
-                  <span>{outlineChapters.length}</span>
-                </div>
-                {outlineChapters.length > 0 ? (
-                  <ol className={styles.chapterList}>
-                    {outlineChapters.map((chapter, index) => (
-                      <li key={`${chapter.title}-${index}`} className={styles.chapterItem}>
-                        <span className={styles.chapterNumber}>{String(index + 1).padStart(2, '0')}</span>
-                        <span className={styles.chapterTitle}>{chapter.title}</span>
-                        <span className={styles.chapterPages}>pp. {chapter.pageStart}–{chapter.pageEnd}</span>
-                      </li>
-                    ))}
-                  </ol>
-                ) : (
-                  <p className={styles.dialogEmpty}>
-                    No chapter headings were detected in this source. SETU will not invent an outline.
-                  </p>
-                )}
-              </section>
-            </div>
-
-            <footer className={styles.dialogFooter}>
-              <span>Nothing is generated until you approve this outline.</span>
-              <div className={styles.rowActions}>
-                <button
-                  type="button"
-                  className={styles.secondary}
-                  onClick={() => { setReviewOutline(null); setReviewError(null); }}
-                  disabled={isGeneratingPath}
-                >
-                  Not now
-                </button>
-                <button
-                  type="button"
-                  className={styles.primary}
-                  disabled={isGeneratingPath || !pathGrade || !pathSubject || !reviewOutline.canBuildPath}
-                  onClick={handleCreatePathFromOutline}
-                >
-                  {isGeneratingPath ? 'Preparing the first units…' : 'Build my learning plan'}
-                </button>
-              </div>
-            </footer>
-          </div>
-        </div>
+        <PlanReviewDialog
+          outline={reviewOutline}
+          reviewError={reviewError}
+          isGeneratingPath={isGeneratingPath}
+          grade={pathGrade}
+          subject={pathSubject}
+          subjectOptions={subjectOptions}
+          taxonomy={{
+            loading: taxonomy.loading,
+            error: taxonomy.error,
+            retry: taxonomy.retry,
+          }}
+          dialogRef={planDialogRef}
+          onGradeChange={setPathGrade}
+          onSubjectChange={setPathSubject}
+          onClose={() => {
+            if (isGeneratingPath) return;
+            setReviewOutline(null);
+            setReviewError(null);
+          }}
+          onBuild={handleCreatePathFromOutline}
+        />
       )}
     </div>
   );

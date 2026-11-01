@@ -98,6 +98,44 @@
   /* Transitions */
   --transition-fast: 150ms ease;
   --transition-normal: 220ms cubic-bezier(0.22, 1, 0.36, 1);
+
+  /* Spacing scale */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --space-10: 40px;
+  --space-12: 48px;
+
+  /* Type scale */
+  --text-xs: 11.5px;
+  --text-sm: 13px;
+  --text-base: 15px;
+  --text-md: 16.5px;
+  --text-lg: 19px;
+  --text-xl: 24px;
+  --text-2xl: 32px;
+  --text-3xl: 42px;
+
+  /* Cards & hairlines */
+  --card-bg: var(--bg-surface);
+  --card-border: 1px solid var(--border-subtle);
+  --card-radius: var(--radius-lg);
+  --card-shadow: var(--shadow-sm);
+  --card-shadow-hover: var(--shadow-md);
+  --hairline: 1px solid var(--rule);
+
+  /* Per-subject gradients — mid-tone starts so white text stays readable.
+     Used for rails, chips and identity accents; never for tiny text alone. */
+  --grad-subject-math: linear-gradient(135deg, #a85f00 0%, #d97f00 58%, #f5a524 100%);
+  --grad-subject-science: linear-gradient(135deg, #0a6f4f 0%, #0f8a63 58%, #23a97e 100%);
+  --grad-subject-social: linear-gradient(135deg, #a84327 0%, #cf5a3c 58%, #e0795a 100%);
+  --grad-subject-english: linear-gradient(135deg, #5f3bc4 0%, #7b4fd6 58%, #9a73ea 100%);
+  --grad-subject-hindi: linear-gradient(135deg, #9c2d58 0%, #c2416f 58%, #d96a90 100%);
+  --grad-subject-it: linear-gradient(135deg, #14479b 0%, #1d5fd6 58%, #4b82ea 100%);
 }
 
 *, *::before, *::after {
