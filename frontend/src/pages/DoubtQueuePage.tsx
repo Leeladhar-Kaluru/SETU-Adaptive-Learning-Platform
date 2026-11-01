@@ -7,15 +7,16 @@ import { api } from '../services/api';
 import { useAuth } from '../context/AuthContext';
 import styles from './DoubtQueuePage.module.css';
 
-type DoubtStatus = 'answered' | 'needs_retry' | 'rejected' | 'waiting';
+type DoubtStatus = 'answered' | 'needs_retry' | 'rejected' | 'waiting' | 'processing';
 
 interface DoubtRow {
   clientDoubtId: string;
   questionText: string;
   status: DoubtStatus;
   submittedAt: string;
+  pathId?: string | null;
   answer?: string;
-  citations: Array<{ citationId?: string; pageNumber?: number; pageStart?: number; pageEnd?: number; snippet?: string; excerpt?: string }>;
+  citations: Array<{ citationId?: string; sourceTitle?: string | null; pageNumber?: number; pageStart?: number; pageEnd?: number; snippet?: string; excerpt?: string }>;
   limitations?: string | null;
   retryable: boolean;
   errorMessage?: string;
@@ -26,6 +27,7 @@ const STATUS_LABEL: Record<DoubtStatus, string> = {
   needs_retry: 'Needs retry',
   rejected: 'Rejected',
   waiting: 'Waiting to sync',
+  processing: 'Being answered',
 };
 
 function toRow(local: OfflineDoubt): DoubtRow {
@@ -33,15 +35,17 @@ function toRow(local: OfflineDoubt): DoubtRow {
   if (local.status === 'answered') status = 'answered';
   else if (local.status === 'rejected') status = 'rejected';
   else if (local.status === 'needs_retry' || local.status === 'failed') status = 'needs_retry';
+  else if (local.status === 'syncing') status = 'processing';
 
   return {
     clientDoubtId: local.clientDoubtId,
     questionText: local.questionText,
     status,
     submittedAt: local.submittedAt,
+    pathId: local.pathId,
     answer: local.answerPayload?.answer || undefined,
     citations: local.answerPayload?.citations || [],
-    limitations: null,
+    limitations: local.answerPayload?.limitations ?? null,
     retryable: status === 'needs_retry',
     errorMessage: local.lastError,
   };
@@ -58,13 +62,36 @@ export const DoubtQueuePage: React.FC = () => {
   const [isSyncing, setIsSyncing] = useState(false);
   const [retryingId, setRetryingId] = useState<string | null>(null);
   const [retryErrors, setRetryErrors] = useState<Record<string, string>>({});
+  const [localError, setLocalError] = useState<string | null>(null);
+  const [isOnline, setIsOnline] = useState(
+    typeof navigator !== 'undefined' ? navigator.onLine : true
+  );
+
+  useEffect(() => {
+    const handleOnline = () => setIsOnline(true);
+    const handleOffline = () => setIsOnline(false);
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+    };
+  }, []);
 
   const loadLocal = async () => {
     if (!user) {
       setLocalDoubts([]);
       return;
     }
-    setLocalDoubts(await getAllDoubts(user.id));
+    setLocalError(null);
+    try {
+      setLocalDoubts(await getAllDoubts(user.id));
+    } catch {
+      setLocalDoubts([]);
+      setLocalError(
+        'This browser did not allow SETU to read its local queue. Questions saved offline may not appear here.'
+      );
+    }
   };
 
   const loadServer = async () => {
@@ -81,12 +108,17 @@ export const DoubtQueuePage: React.FC = () => {
               ? 'rejected'
               : doubt.status === 'needs_retry'
                 ? 'needs_retry'
-                : 'waiting';
+                : doubt.status === 'queued_offline' ||
+                    doubt.status === 'sending' ||
+                    doubt.status === 'processing'
+                  ? 'processing'
+                  : 'waiting';
           return {
             clientDoubtId: doubt.clientDoubtId,
             questionText: doubt.questionText,
             status,
             submittedAt: doubt.createdAt,
+            pathId: doubt.pathId ?? null,
             answer: doubt.answerJson?.answer || undefined,
             citations: doubt.answerJson?.citations || [],
             limitations: doubt.answerJson?.limitations ?? null,
@@ -151,25 +183,26 @@ export const DoubtQueuePage: React.FC = () => {
       const res = await api.askDoubt({
         clientDoubtId: row.clientDoubtId,
         questionText: row.questionText,
+        pathId: row.pathId || undefined,
       });
       if (res.status !== 'answered' || !res.answerJson?.answer) {
         throw new Error(res.answerJson?.message || 'The tutor is still unavailable.');
       }
-      setServerDoubts((prev) =>
-        prev.map((item) =>
-          item.clientDoubtId === row.clientDoubtId
-            ? {
-                ...item,
-                status: 'answered' as const,
-                retryable: false,
-                answer: res.answerJson.answer,
-                citations: res.answerJson.citations || [],
-                limitations: res.answerJson.limitations ?? null,
-                errorMessage: undefined,
-              }
-            : item
-        )
-      );
+      setServerDoubts((prev) => {
+        const withoutRow = prev.filter((item) => item.clientDoubtId !== row.clientDoubtId);
+        return [
+          {
+            ...row,
+            status: 'answered' as const,
+            retryable: false,
+            answer: res.answerJson.answer,
+            citations: res.answerJson.citations || [],
+            limitations: res.answerJson.limitations ?? null,
+            errorMessage: undefined,
+          },
+          ...withoutRow,
+        ];
+      });
       await loadLocal();
     } catch (err: any) {
       setRetryErrors((prev) => ({
@@ -188,12 +221,15 @@ export const DoubtQueuePage: React.FC = () => {
         ? styles.statusRetry
         : status === 'rejected'
           ? styles.statusRejected
-          : styles.statusWaiting;
+          : status === 'processing'
+            ? styles.statusProcessing
+            : styles.statusWaiting;
 
   const statusIcon = (status: DoubtStatus) => {
     if (status === 'answered') return <CheckCircle2 size={13} />;
     if (status === 'needs_retry') return <AlertTriangle size={13} />;
     if (status === 'rejected') return <Ban size={13} />;
+    if (status === 'processing') return <RefreshCw size={13} className={styles.spin} />;
     return <Clock size={13} />;
   };
 
@@ -222,10 +258,22 @@ export const DoubtQueuePage: React.FC = () => {
         </button>
       </div>
 
+      {localError && (
+        <div className={styles.notice} role="alert">
+          <strong>Local queue unavailable.</strong> {localError}
+          <button type="button" className={styles.noticeRetry} onClick={() => void loadLocal()}>
+            Retry
+          </button>
+        </div>
+      )}
+
       {serverStatus.state === 'error' && (
         <div className={styles.notice} role="status">
           <strong>SETU could not be reached.</strong> Showing doubts stored on this device only.
           <span className={styles.noticeDetail}>{serverStatus.message}</span>
+          <button type="button" className={styles.noticeRetry} onClick={() => void loadServer()}>
+            Retry
+          </button>
         </div>
       )}
 
@@ -238,7 +286,7 @@ export const DoubtQueuePage: React.FC = () => {
 
       {serverStatus.state !== 'loading' && rows.length === 0 && (
         <div className={styles.empty}>
-          <Clock size={36} color="#9AA6B8" />
+          <Clock size={36} className={styles.emptyIcon} aria-hidden="true" />
           <h2>No doubts yet.</h2>
           <p>
             Open a lesson and choose Ask a doubt. Answers cite the page of your uploaded material
@@ -268,8 +316,21 @@ export const DoubtQueuePage: React.FC = () => {
 
               {row.status === 'answered' && row.answer && (
                 <div className={styles.answer}>
-                  <div className={styles.answerLabel}>Answer from your sources</div>
+                  <div className={styles.answerLabel}>
+                    {row.limitations === 'no_source_attached'
+                      ? 'No source attached'
+                      : 'Answer from your sources'}
+                  </div>
                   <p className={styles.answerText}>{row.answer}</p>
+                  {row.limitations === 'no_source_attached' && (
+                    <button
+                      type="button"
+                      className={styles.primary}
+                      onClick={() => navigate('/')}
+                    >
+                      Add a source
+                    </button>
+                  )}
                   {row.limitations === 'insufficient_source_evidence' && (
                     <p className={styles.limitation}>
                       Your uploaded source did not contain enough evidence for a grounded
@@ -280,6 +341,7 @@ export const DoubtQueuePage: React.FC = () => {
                     <div className={styles.citations}>
                       <FileSearch size={14} />
                       <span>
+                        {row.citations[0]?.sourceTitle ? `${row.citations[0].sourceTitle} · ` : ''}
                         Source page
                         {row.citations.length > 1 ? 's' : ''}:{' '}
                         {row.citations.map((citation, index) => {
@@ -315,15 +377,21 @@ export const DoubtQueuePage: React.FC = () => {
                     type="button"
                     className={styles.retryButton}
                     onClick={() => void handleRetry(row)}
-                    disabled={retryingId === row.clientDoubtId || !navigator.onLine}
+                    disabled={retryingId === row.clientDoubtId || !isOnline}
                   >
                     {retryingId === row.clientDoubtId
                       ? 'Asking SETU…'
-                      : navigator.onLine
+                      : isOnline
                         ? 'Retry'
                         : 'Retry when online'}
                   </button>
                 </div>
+              )}
+
+              {row.status === 'processing' && (
+                <p className={styles.waitingText}>
+                  SETU is answering this question now. Refresh this page to see the result.
+                </p>
               )}
 
               {row.status === 'waiting' && (

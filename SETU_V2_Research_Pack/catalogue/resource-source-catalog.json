@@ -1,0 +1,192 @@
+{
+  "catalogue_version": "1.0.0",
+  "verified_at": "2026-10-28",
+  "note": "Discovery starters only. Verify every individual resource and its rights before exposing it in production. This file catalogues source portals, not a complete list of downloaded textbooks.",
+  "sources": [
+    {
+      "source_id": "telangana-scert-ebooks",
+      "source_name": "Telangana SCERT E-Books / Text Books",
+      "source_type": "official_state_curriculum_portal",
+      "source_url": "https://www.scert.telangana.gov.in/",
+      "alternate_domain": "https://scert.telangana.gov.in/",
+      "resource_discovery_url": "https://www.scert.telangana.gov.in/Home.aspx/NarasimhaSatakam/BhaskaraSatakam/Pdf/PDF/publication/bed/pdf/DisplayContent.aspx?encry=ammkNW4%2Fgx+NeApstGPX+A%3D%3D",
+      "resource_detail_url": "https://scert.telangana.gov.in/DisplayImage.aspx?encry=+J9U0B1hNdhJSYNXCM30vQ%3D%3D",
+      "observed_listing": "Search-indexed page titled TEXT BOOKS (I TO X) - 2025-26; recheck academic year when importing resources.",
+      "verification_status": "portal_verified_resource_links_dynamic",
+      "allowed_actions_default": {
+        "can_link": true,
+        "can_download": "verify_per_item",
+        "can_store_original": "verify_per_item",
+        "can_process": "verify_per_item",
+        "can_embed": "verify_per_item",
+        "can_offline_cache": "verify_per_item",
+        "can_redistribute": false
+      },
+      "rights_notes": "A public download does not automatically grant redistribution/offline packaging rights. Store exact observed destination URLs and verification timestamps per item.",
+      "language_support_note": "Indexed listing showed multiple media/language rows; verify each class/subject edition separately."
+    },
+    {
+      "source_id": "ncert-textbook-portal",
+      "source_name": "NCERT Online Textbooks",
+      "source_type": "official_national_textbook_portal",
+      "source_url": "https://ncert.nic.in/textbook.php",
+      "alternate_selector_url": "https://epathshala.nic.in/wp-content/doc/book/btextbook/textbook.htm",
+      "direct_test_pdf_url": "https://www.ncert.nic.in/textbook/pdf/jesc1ps.pdf",
+      "direct_test_pdf_note": "Class X Science prelims/introductory PDF only; not a full textbook.",
+      "verification_status": "portal_and_terms_verified",
+      "allowed_actions_default": {
+        "can_link": "written_permission_check",
+        "can_download": "user_portal_flow",
+        "can_store_original": false,
+        "can_process": "legal_review_and_user_upload_scope",
+        "can_embed": false,
+        "can_offline_cache": false,
+        "can_redistribute": false
+      },
+      "rights_notes": "Official NCERT notice restricts republication, redistribution, rehosting and use in digital content packages/software; links may require written permission. Contact rights holder/legal adviser before integration."
+    },
+    {
+      "source_id": "diksha",
+      "source_name": "DIKSHA National Digital Infrastructure for Education",
+      "source_type": "official_education_resource_platform",
+      "source_url": "https://diksha.gov.in/",
+      "overview_url": "https://pmevidya.education.gov.in/diksha.html",
+      "terms_url": "https://diksha.gov.in/term-of-use.html",
+      "verification_status": "official_portal_and_terms_verified_item_licence_required",
+      "allowed_actions_default": {
+        "can_link": "verify_per_item",
+        "can_download": "verify_per_item",
+        "can_store_original": "verify_per_item",
+        "can_process": "verify_per_item",
+        "can_embed": "verify_per_item",
+        "can_offline_cache": "verify_per_item",
+        "can_redistribute": "verify_per_item"
+      },
+      "rights_notes": "Do not assume uniform licence coverage or an unauthenticated API. Store each item's source URL, creator, licence, attribution and allowed actions."
+    },
+    {
+      "source_id": "cbse-curriculum-2026-27",
+      "source_name": "CBSE Academic Curriculum 2026-27",
+      "source_type": "official_syllabus_and_curriculum_reference",
+      "source_url": "https://cbseacademic.nic.in/curriculum_2027.html",
+      "verification_status": "official_curriculum_index_verified",
+      "allowed_actions_default": {
+        "can_link": true,
+        "can_download": "verify_per_document",
+        "can_store_original": "verify_terms",
+        "can_process": "verify_terms",
+        "can_embed": "verify_terms",
+        "can_offline_cache": "verify_terms",
+        "can_redistribute": false
+      },
+      "rights_notes": "A syllabus reference is not equivalent to a textbook licence."
+    },
+    {
+      "source_id": "openverse-media",
+      "source_name": "Openverse Openly Licensed Media Search",
+      "source_type": "media_search_api",
+      "source_url": "https://api.openverse.org/v1/",
+      "documentation_url": "https://docs.openverse.org/",
+      "verification_status": "api_docs_verified_asset_validation_required",
+      "allowed_actions_default": {
+        "can_link": true,
+        "can_download": "verify_asset_licence",
+        "can_store_original": "verify_asset_licence",
+        "can_process": "verify_asset_licence",
+        "can_embed": "verify_asset_licence",
+        "can_offline_cache": "verify_asset_licence",
+        "can_redistribute": "verify_asset_licence"
+      },
+      "rights_notes": "Validate the original asset page and exact licence/version. Attribution, ShareAlike, NonCommercial and NoDerivatives conditions can apply. Don't bulk scrape."
+    },
+    {
+      "source_id": "andhra-pradesh-school-education-textbooks",
+      "source_name": "Andhra Pradesh Department of School Education textbook downloads",
+      "source_type": "official_state_textbook_portal",
+      "source_url": "https://cse.ap.gov.in/textBooksDownloadingPagetitleWise",
+      "academic_selector_url": "https://cse.ap.gov.in/loadacademictextbookpublicview",
+      "additional_bilingual_urls": [
+        "https://cse.ap.gov.in/textBooksDownloadingPageMinorBilingual",
+        "https://samagrashiksha.ap.gov.in/textBooksDownloadingPageTEBilingual"
+      ],
+      "verification_status": "official_portal_verified_individual_links_need_verification",
+      "allowed_actions_default": {
+        "can_link": true,
+        "can_download": "verify_per_item",
+        "can_store_original": "verify_per_item",
+        "can_process": "verify_per_item",
+        "can_embed": "verify_per_item",
+        "can_offline_cache": "verify_per_item",
+        "can_redistribute": false
+      },
+      "rights_notes": "Official download buttons are not sufficient evidence of redistribution rights. Record the exact direct destination after verification and check terms per item. Direct candidates were observed in the official table but some automated fetches returned server errors/timeouts; manually verify current downloads and rights before production use.",
+      "candidate_direct_links": [
+        {
+          "grade": 6,
+          "subject": "Mathematics",
+          "edition": "Semester 1",
+          "url": "https://cse.ap.gov.in/downloadBooks/Maths%20Books/6_Maths_SEM-1_Textbook.pdf/6",
+          "status": "needs_manual_download_verification"
+        },
+        {
+          "grade": 8,
+          "subject": "Mathematics",
+          "edition": "Semester 1",
+          "url": "https://cse.ap.gov.in/downloadBooks/Maths%20Books/8_Maths_SEM-1_Textbook.pdf/8",
+          "status": "needs_manual_download_verification"
+        },
+        {
+          "grade": 9,
+          "subject": "Mathematics",
+          "edition": "Semester 1",
+          "url": "https://cse.ap.gov.in/downloadBooks/Maths%20Books/9_Maths_SEM-1_Textbook.pdf/9",
+          "status": "needs_manual_download_verification"
+        },
+        {
+          "grade": 10,
+          "subject": "English",
+          "edition": "Textbook",
+          "url": "https://cse.ap.gov.in/downloadBooks/English%20Books/10_English_Textbook.pdf/10",
+          "status": "needs_manual_download_verification"
+        }
+      ]
+    },
+    {
+      "source_id": "maharashtra-ebalbharati",
+      "source_name": "Maharashtra eBalbharati e-Book Library",
+      "source_type": "official_state_textbook_portal",
+      "source_url": "https://books.ebalbharati.in/ebook.aspx",
+      "home_and_licensing_url": "https://ebalbharati.in/main/publichome.aspx",
+      "verification_status": "official_catalogue_verified_rights_review_required",
+      "observed_coverage": "Indexed catalogue includes syllabus years, classes 1-12, several book types/subjects and multiple mediums including Marathi, Hindi, English, Urdu, Gujarati, Kannada, Sindhi, Telugu, Tamil and Bengali.",
+      "allowed_actions_default": {
+        "can_link": "verify_terms",
+        "can_download": "official_portal_flow",
+        "can_store_original": false,
+        "can_process": "permission_review",
+        "can_embed": "permission_review",
+        "can_offline_cache": false,
+        "can_redistribute": false
+      },
+      "rights_notes": "Official home says PDFs are free to download and separately presents a licensing process for use of textbook content. Free download does not mean rehosting/redistribution permission."
+    },
+    {
+      "source_id": "kerala-scert",
+      "source_name": "Kerala SCERT official textbook portal",
+      "source_type": "official_state_curriculum_portal",
+      "source_url": "https://scert.kerala.gov.in/",
+      "verification_status": "official_portal_verified_item_links_need_review",
+      "observed_coverage": "Current indexed notices include revised textbooks for classes such as 6, 8 and 10 and curriculum-related materials for 2026-27.",
+      "allowed_actions_default": {
+        "can_link": true,
+        "can_download": "verify_per_item",
+        "can_store_original": "verify_per_item",
+        "can_process": "verify_per_item",
+        "can_embed": "verify_per_item",
+        "can_offline_cache": "verify_per_item",
+        "can_redistribute": false
+      },
+      "rights_notes": "Verify exact medium/academic year/download URL and rights for every resource before integration."
+    }
+  ]
+}

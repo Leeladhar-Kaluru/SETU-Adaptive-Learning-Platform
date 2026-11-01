@@ -142,6 +142,7 @@ class ExtractionService:
             is_scanned = char_count < 40 and len(images) > 0
             is_corrupted = not is_scanned and self._is_corrupted_text(text, char_count)
             needs_ocr = is_scanned or is_corrupted
+            ocr_used = False
 
             if needs_ocr and self.tessdata_path:
                 try:
@@ -155,6 +156,7 @@ class ExtractionService:
                         needs_ocr = False
                         is_scanned = False
                         is_corrupted = False
+                        ocr_used = True
                 except Exception:
                     # Fallback to pixmap OCR if get_textpage_ocr fails
                     try:
@@ -169,6 +171,7 @@ class ExtractionService:
                             needs_ocr = False
                             is_scanned = False
                             is_corrupted = False
+                            ocr_used = True
                     except Exception:
                         pass
 
@@ -215,6 +218,7 @@ class ExtractionService:
                     "has_images": len(images) > 0,
                     "image_count": len(images),
                     "is_corrupted": is_corrupted,
+                    "ocr_applied": ocr_used,
                     "rect": [page.rect.x0, page.rect.y0, page.rect.x1, page.rect.y1],
                 },
             })

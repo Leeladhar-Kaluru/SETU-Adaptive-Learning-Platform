@@ -93,6 +93,25 @@ async def claim_next_job(db, lease_seconds: int = 300) -> Optional[GenerationJob
 
     return job
 
+def refresh_path_status(db, path: LearningPath) -> None:
+    """Keep the parent path status truthful as lessons reach terminal states."""
+    # SessionLocal disables autoflush, so persist the lesson's new status before
+    # deciding whether every sibling has reached a terminal state.
+    db.flush()
+    statuses = [
+        row[0]
+        for row in db.query(PathLesson.status)
+        .filter(PathLesson.path_id == path.id)
+        .all()
+    ]
+    if any(status in ("queued", "generating") for status in statuses):
+        path.status = "generating"
+    elif any(status == "ready" for status in statuses):
+        path.status = "active"
+    else:
+        path.status = "failed"
+
+
 async def process_job(db, job: GenerationJob) -> bool:
     """Executes lesson generation and validation for claimed job."""
     print(f"[{WORKER_ID}] Processing job {job.id} for lesson {job.lesson_id} (Attempt {job.attempt_count})")
@@ -111,7 +130,9 @@ async def process_job(db, job: GenerationJob) -> bool:
 
         # Fetch evidence chunks for this specific lesson based on chapter page range
         chunks = []
+        document = None
         if path.document_id:
+            document = db.query(Document).filter(Document.id == path.document_id).first()
             chapters = (path.outline_json or {}).get("chapters", [])
             chapter_idx = max(0, lesson.sequence - 1)
             target_chapter = chapters[chapter_idx] if chapter_idx < len(chapters) else None
@@ -144,6 +165,7 @@ async def process_job(db, job: GenerationJob) -> bool:
                     "pageStart": c.page_start,
                     "pageEnd": c.page_end,
                     "headingPath": c.heading_path or [],
+                    "sourceTitle": document.original_filename if document else None,
                     "text": c.text
                 }
                 for c in c_rows
@@ -156,7 +178,8 @@ async def process_job(db, job: GenerationJob) -> bool:
             path_id=str(path.id),
             grade=path.grade,
             subject=path.subject_id,
-            evidence_chunks=chunks
+            evidence_chunks=chunks,
+            language_tag=(document.language_tag if document else "en-IN") or "en-IN",
         )
 
         job.status = "validating"
@@ -184,6 +207,7 @@ async def process_job(db, job: GenerationJob) -> bool:
             lesson.status = "ready"
             job.status = "ready"
             job.completed_at = datetime.datetime.now(datetime.timezone.utc)
+            refresh_path_status(db, path)
 
             # Insert question records into database for checkpoint tests and practice
             from app.models.learning import Question
@@ -191,6 +215,9 @@ async def process_job(db, job: GenerationJob) -> bool:
             for q_idx, q_item in enumerate(all_questions):
                 q_key = q_item.get("questionId") or f"q_{q_idx + 1}"
                 q_prompt = q_item.get("prompt") if isinstance(q_item.get("prompt"), dict) else {"text": str(q_item.get("prompt") or "")}
+                q_options = q_item.get("options")
+                if isinstance(q_options, list) and q_options:
+                    q_prompt = {**q_prompt, "options": q_options}
                 answer_payload = q_item.get("answerKey")
                 answer_payload = answer_payload if isinstance(answer_payload, dict) else {"answer": str(answer_payload or "")}
                 if q_item.get("feedback"):
@@ -220,6 +247,7 @@ async def process_job(db, job: GenerationJob) -> bool:
             job.status = "failed"
             job.error_code = "validation_failed"
             job.safe_error_message = "Lesson validation failed: " + ", ".join(failed_checks[:3])
+            refresh_path_status(db, path)
         
         db.commit()
         return True

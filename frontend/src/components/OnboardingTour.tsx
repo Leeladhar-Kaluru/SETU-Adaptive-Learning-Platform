@@ -225,7 +225,7 @@ export const OnboardingTour: React.FC<OnboardingTourProps> = ({ isOpen, onClose 
                 Welcome to SETU
               </h2>
               <p className={styles.subtitle}>
-                The purpose-built, source-grounded adaptive learning desk for Classes 6 to 10. Learn concepts directly from the sources you add, ask doubts with page citations, and study offline anytime.
+                The purpose-built, source-grounded adaptive learning desk for school students. Learn concepts directly from the sources you add, ask doubts with page citations, and study offline anytime.
               </p>
               <div className={styles.featureList}>
                 <div className={styles.featureCard}>
@@ -266,7 +266,7 @@ export const OnboardingTour: React.FC<OnboardingTourProps> = ({ isOpen, onClose 
                 How SETU Works
               </h2>
               <p className={styles.subtitle}>
-                Built for Indian school curriculum standards across Classes 6 to 10.
+                Built for Indian school curriculum standards.
               </p>
 
               <div className={styles.featureList}>
@@ -346,7 +346,7 @@ export const OnboardingTour: React.FC<OnboardingTourProps> = ({ isOpen, onClose 
                           value={role}
                           onChange={e => setRole(e.target.value as any)}
                         >
-                          <option value="student">Student (Classes 6–10)</option>
+                          <option value="student">Student</option>
                           <option value="teacher">Teacher / Educator</option>
                         </select>
                       </div>

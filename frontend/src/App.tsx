@@ -2,6 +2,7 @@ import React, { ReactNode } from 'react';
 import { Navigate, Routes, Route } from 'react-router-dom';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { Navigation } from './components/Navigation';
+import { AskSetu } from './components/AskSetu';
 import { OnboardingTour } from './components/OnboardingTour';
 import { AuthGate } from './components/AuthGate';
 import { HomePage } from './pages/HomePage';
@@ -21,14 +22,27 @@ const StudentOnly: React.FC<{ children: ReactNode }> = ({ children }) => {
 };
 
 const AppContent: React.FC = () => {
-  const { isTourOpen, closeTour, isLoading } = useAuth();
+  const { isTourOpen, closeTour, isLoading, sessionError, retrySession, logout } = useAuth();
 
   return (
     <div className={styles.shell}>
+      <a className={styles.skipLink} href="#main-content">Skip to content</a>
       <Navigation />
-      <main className={styles.main}>
+      <main id="main-content" className={styles.main} tabIndex={-1}>
         {isLoading ? (
-          <p style={{ padding: 32 }}>Loading SETU…</p>
+          <p className={styles.appLoading}>Loading SETU…</p>
+        ) : sessionError ? (
+          <section className={styles.sessionError} role="alert">
+            <span className={styles.sessionKicker}>Connection paused</span>
+            <h1>Your desk is still here</h1>
+            <p>{sessionError}</p>
+            <div className={styles.sessionActions}>
+              <button type="button" onClick={() => void retrySession()}>Try again</button>
+              <button type="button" className={styles.sessionSignOut} onClick={() => void logout()}>
+                Sign out
+              </button>
+            </div>
+          </section>
         ) : (
           <Routes>
             <Route path="/" element={<StudentOnly><HomePage /></StudentOnly>} />
@@ -76,6 +90,7 @@ const AppContent: React.FC = () => {
           </Routes>
         )}
       </main>
+      <AskSetu />
       <OnboardingTour isOpen={isTourOpen} onClose={closeTour} />
     </div>
   );

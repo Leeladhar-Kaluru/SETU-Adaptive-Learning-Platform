@@ -1,22 +1,43 @@
-import React, { useState, useRef, useEffect, useCallback } from 'react';
+import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Upload } from 'lucide-react';
-import { api, LearningPathItem, IngestionStatus, UserDocument } from '../services/api';
+import { Upload, Sparkles, Target, Brain, Clock3, Play, BookOpen, ArrowRight } from 'lucide-react';
+import { api, LearningPathItem, IngestionStatus, UserDocument, StudyPlan, LearnerInsights, SmartCheckQuestion, AttemptResult } from '../services/api';
 import { useAuth } from '../context/AuthContext';
 import { AuthModal } from '../components/AuthModal';
 import { DynamicActivityIndicator, ActivityPhase } from '../components/DynamicActivityIndicator';
 import { saveLessonOffline } from '../db/indexedDB';
+import { GRADES, gradeLabel } from '../lib/academic';
+import { useDialogFocus } from '../hooks/useDialogFocus';
+import { useTaxonomy } from '../hooks/useTaxonomy';
 import styles from './HomePage.module.css';
+
+const normalizeLabel = (value: string) =>
+  value
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim();
+
+const escapeRegExp = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 export const HomePage: React.FC = () => {
   const navigate = useNavigate();
   const { user, openTour } = useAuth();
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const taxonomy = useTaxonomy(Boolean(user));
 
   const [activePaths, setActivePaths] = useState<LearningPathItem[]>([]);
   const [materials, setMaterials] = useState<UserDocument[]>([]);
   const [selectedDocId, setSelectedDocId] = useState<string | null>(null);
   const [studySummary, setStudySummary] = useState<Awaited<ReturnType<typeof api.getStudySummary>> | null>(null);
+  const [studyPlan, setStudyPlan] = useState<StudyPlan | null>(null);
+  const [insights, setInsights] = useState<LearnerInsights | null>(null);
+  const [smartQuestion, setSmartQuestion] = useState<SmartCheckQuestion | null>(null);
+  const [smartSelected, setSmartSelected] = useState('');
+  const [smartResult, setSmartResult] = useState<AttemptResult | null>(null);
+  const [smartAnswered, setSmartAnswered] = useState<string[]>([]);
+  const [smartMessage, setSmartMessage] = useState('');
+  const [smartBusy, setSmartBusy] = useState(false);
+  const [smartDone, setSmartDone] = useState(false);
   const [respondingSuggestionId, setRespondingSuggestionId] = useState<string | null>(null);
   const [suggestionErrors, setSuggestionErrors] = useState<Record<string, string>>({});
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
@@ -35,9 +56,13 @@ export const HomePage: React.FC = () => {
   const [activityDetail, setActivityDetail] = useState('');
   const [progressPercent, setProgressPercent] = useState<number | undefined>(undefined);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [loadFailures, setLoadFailures] = useState({ paths: false, materials: false });
+  const [isDeskLoading, setIsDeskLoading] = useState(false);
+  const [uploadNotice, setUploadNotice] = useState<string | null>(null);
 
   // Outline Review Modal State
   const [reviewOutline, setReviewOutline] = useState<IngestionStatus | null>(null);
+  const [reviewError, setReviewError] = useState<string | null>(null);
   const [isGeneratingPath, setIsGeneratingPath] = useState(false);
   const [pathGrade, setPathGrade] = useState<string>(user?.grade ? String(user.grade) : '');
   const [pathSubject, setPathSubject] = useState<string>(user?.subjectsInterested?.[0] || '');
@@ -45,14 +70,49 @@ export const HomePage: React.FC = () => {
   // Polling ref
   const pollIntervalRef = useRef<any>(null);
   const uploadRequestRef = useRef<XMLHttpRequest | null>(null);
+  const autoSubjectDoc = useRef<string | null>(null);
+
+  const suggestedSubjectId = useMemo(() => {
+    if (!reviewOutline || taxonomy.subjects.length === 0) return '';
+    const title = normalizeLabel(reviewOutline.filename);
+    let best: { id: string; length: number } | null = null;
+
+    for (const subject of taxonomy.subjects) {
+      const labels = [
+        subject.canonicalName,
+        subject.name,
+        subject.code.replace(/^subject-/, '').replace(/-/g, ' '),
+      ];
+      for (const label of labels) {
+        const candidate = normalizeLabel(label || '');
+        if (candidate.length < 3) continue;
+        const matches = new RegExp(`(^| )${escapeRegExp(candidate)}( |$)`).test(title);
+        if (matches && (!best || candidate.length > best.length)) {
+          best = { id: subject.id, length: candidate.length };
+        }
+      }
+    }
+
+    return best?.id || '';
+  }, [reviewOutline, taxonomy.subjects]);
+  const planDialogRef = useRef<HTMLDivElement>(null);
+
+  useDialogFocus(planDialogRef, Boolean(reviewOutline), () => {
+    if (!isGeneratingPath) {
+      setReviewOutline(null);
+      setReviewError(null);
+    }
+  });
 
   const fetchPaths = useCallback(async () => {
     if (!user) return;
     try {
       const res = await api.getLearningPaths();
       setActivePaths(res);
+      setLoadFailures((prev) => (prev.paths ? { ...prev, paths: false } : prev));
     } catch (err: any) {
       console.warn('Could not load active paths:', err);
+      setLoadFailures((prev) => (prev.paths ? prev : { ...prev, paths: true }));
     }
   }, [user]);
 
@@ -61,8 +121,10 @@ export const HomePage: React.FC = () => {
     try {
       const docs = await api.listDocuments();
       setMaterials(docs);
+      setLoadFailures((prev) => (prev.materials ? { ...prev, materials: false } : prev));
     } catch (err: any) {
       console.warn('Could not load materials:', err);
+      setLoadFailures((prev) => (prev.materials ? prev : { ...prev, materials: true }));
     }
   }, [user]);
 
@@ -73,6 +135,16 @@ export const HomePage: React.FC = () => {
     } catch {
       setStudySummary(null);
     }
+  }, [user]);
+
+  const fetchPlanning = useCallback(async () => {
+    if (!user) return;
+    const [planResult, insightResult] = await Promise.allSettled([
+      api.getStudyPlan(),
+      api.getLearnerInsights(),
+    ]);
+    if (planResult.status === 'fulfilled') setStudyPlan(planResult.value);
+    if (insightResult.status === 'fulfilled') setInsights(insightResult.value);
   }, [user]);
 
   const respondToSuggestion = async (id: string, decision: 'accept' | 'dismiss') => {
@@ -96,13 +168,33 @@ export const HomePage: React.FC = () => {
       setActivePaths([]);
       setMaterials([]);
       setStudySummary(null);
+      setStudyPlan(null);
+      setInsights(null);
       setErrorMessage(null);
+      setSmartQuestion(null);
+      setSmartResult(null);
+      setSmartAnswered([]);
+      setSmartDone(false);
+      setLoadFailures({ paths: false, materials: false });
+      setIsDeskLoading(false);
       return;
     }
-    fetchPaths();
-    fetchMaterials();
-    fetchSummary();
-  }, [user, fetchPaths, fetchMaterials, fetchSummary]);
+    let active = true;
+    setIsDeskLoading(true);
+    void Promise.allSettled([fetchPaths(), fetchMaterials(), fetchSummary(), fetchPlanning()]).finally(() => {
+      if (active) setIsDeskLoading(false);
+    });
+    return () => {
+      active = false;
+    };
+  }, [user, fetchPaths, fetchMaterials, fetchSummary, fetchPlanning]);
+
+  const retryWorkspace = async () => {
+    setIsDeskLoading(true);
+    await Promise.allSettled([fetchPaths(), fetchMaterials(), fetchSummary(), fetchPlanning()]);
+    setIsDeskLoading(false);
+  };
+
 
   useEffect(() => {
     if (!user) return;
@@ -114,11 +206,14 @@ export const HomePage: React.FC = () => {
     );
     if (!waiting && !reading) return;
     const timer = window.setInterval(() => {
-      if (waiting) fetchPaths();
+      if (waiting) {
+        void fetchPaths();
+        void fetchPlanning();
+      }
       if (reading) fetchMaterials();
     }, 4000);
     return () => window.clearInterval(timer);
-  }, [user, activePaths, materials, fetchPaths, fetchMaterials]);
+  }, [user, activePaths, materials, fetchPaths, fetchMaterials, fetchPlanning]);
 
   // Clean up polling timer
   useEffect(() => {
@@ -129,8 +224,24 @@ export const HomePage: React.FC = () => {
 
   useEffect(() => {
     if (user?.grade && !pathGrade) setPathGrade(String(user.grade));
-    if (user?.subjectsInterested?.[0] && !pathSubject) setPathSubject(user.subjectsInterested[0]);
-  }, [user, pathGrade, pathSubject]);
+    const catalogIds = taxonomy.subjects.map((subject) => subject.id);
+    const interests = user?.subjectsInterested || [];
+    const currentIsValid = catalogIds.includes(pathSubject) || interests.includes(pathSubject);
+    if (!currentIsValid) {
+      const preferred = interests.find((value) => catalogIds.includes(value));
+      const onlyOption = taxonomy.subjects.length === 1 ? taxonomy.subjects[0].id : '';
+      setPathSubject(preferred || onlyOption);
+    }
+  }, [user, taxonomy.subjects, pathGrade, pathSubject]);
+
+  useEffect(() => {
+    if (!reviewOutline || taxonomy.loading || taxonomy.subjects.length === 0) return;
+    if (autoSubjectDoc.current === reviewOutline.documentId) return;
+    autoSubjectDoc.current = reviewOutline.documentId;
+    if (suggestedSubjectId && suggestedSubjectId !== pathSubject) {
+      setPathSubject(suggestedSubjectId);
+    }
+  }, [reviewOutline, taxonomy.loading, taxonomy.subjects, suggestedSubjectId, pathSubject]);
 
   const handleDragOver = (e: React.DragEvent) => {
     e.preventDefault();
@@ -155,18 +266,23 @@ export const HomePage: React.FC = () => {
     }
   };
 
-  const applyPhase = (status: string, filename: string) => {
+  const applyPhase = (status: string, filename: string, progressMessage?: string | null) => {
     setProgressPercent(undefined);
     if (status === 'stored' || status === 'uploading') {
       setActivityPhase('extracting');
-      setActivityDetail(`Stored ${filename}. Waiting for the worker to read the file.`);
+      setActivityDetail(progressMessage || `Stored ${filename}. Waiting for the processing worker.`);
     } else if (status === 'extracting') {
       setActivityPhase('extracting');
-      setActivityDetail('Reading your document');
+      setActivityDetail(progressMessage || 'Reading your document');
     } else if (status === 'indexing' || status === 'extracted') {
       setActivityPhase('chunking');
-      setActivityDetail('Indexing document');
+      setActivityDetail(progressMessage || 'Indexing document');
     }
+  };
+
+  const openReview = (status: IngestionStatus) => {
+    setReviewError(null);
+    setReviewOutline(status);
   };
 
   const pollDocumentStatus = (docId: string, initialFilename: string) => {
@@ -180,12 +296,12 @@ export const HomePage: React.FC = () => {
           const rest = current.filter((item) => item.documentId !== docId);
           return [{ ...statusData, id: docId, documentId: docId, filename: statusData.filename || initialFilename }, ...rest];
         });
-        applyPhase(statusData.status, initialFilename);
+        applyPhase(statusData.status, initialFilename, statusData.progressMessage);
 
         if (statusData.status === 'ready' || statusData.status === 'awaiting_review') {
           clearInterval(pollIntervalRef.current);
           setIsUploading(false);
-          setReviewOutline(statusData);
+          openReview(statusData);
           fetchMaterials();
         } else if (statusData.status === 'failed' || statusData.status === 'needs_ocr') {
           clearInterval(pollIntervalRef.current);
@@ -209,6 +325,7 @@ export const HomePage: React.FC = () => {
     }
 
     setErrorMessage(null);
+    setUploadNotice(null);
     setIsUploading(true);
     setActivityPhase('extracting');
     setActivityDetail(`Uploading ${file.name}`);
@@ -220,6 +337,9 @@ export const HomePage: React.FC = () => {
         setActivityDetail(`Uploading ${file.name}`);
       }, uploadRequestRef);
       setProgressPercent(undefined);
+      if (data.deduplicated) {
+        setUploadNotice('This file is already in your library, so SETU reused the existing copy instead of storing a duplicate.');
+      }
       setMaterials((current) => {
         const rest = current.filter((item) => item.documentId !== data.documentId);
         return [{ ...data, id: data.documentId }, ...rest];
@@ -228,7 +348,7 @@ export const HomePage: React.FC = () => {
       if (data.status === 'ready' || data.status === 'awaiting_review') {
         setIsUploading(false);
         const statusData = await api.getDocumentStatus(data.documentId);
-        setReviewOutline(statusData);
+        openReview(statusData);
       } else if (data.status === 'failed') {
         setIsUploading(false);
         setErrorMessage(data.errorMessage || 'Upload failed.');
@@ -248,9 +368,10 @@ export const HomePage: React.FC = () => {
   };
 
   const handleCreatePathFromOutline = async () => {
-    if (!reviewOutline) return;
+    if (!reviewOutline || !reviewOutline.canBuildPath) return;
     if (!pathGrade || !pathSubject) return;
     setIsGeneratingPath(true);
+    setReviewError(null);
     setErrorMessage(null);
 
     try {
@@ -262,12 +383,13 @@ export const HomePage: React.FC = () => {
 
       setReviewOutline(null);
       await fetchPaths();
+      void fetchPlanning();
       setIsGeneratingPath(false);
       if (!res.firstLessonId) {
         setErrorMessage('The learning path was created, but it has no lessons yet.');
       }
     } catch (err: any) {
-      setErrorMessage(err.message || 'Failed to create learning path.');
+      setReviewError(err.message || 'SETU could not create a learning plan from this document.');
       setIsGeneratingPath(false);
     }
   };
@@ -277,7 +399,7 @@ export const HomePage: React.FC = () => {
     try {
       const statusData = await api.getDocumentStatus(documentId);
       if (statusData.status === 'awaiting_review' || statusData.status === 'ready') {
-        setReviewOutline(statusData);
+        openReview(statusData);
       } else if (statusData.status === 'failed' || statusData.status === 'needs_ocr') {
         setErrorMessage(statusData.errorMessage || 'This file needs another attempt.');
       } else {
@@ -324,8 +446,93 @@ export const HomePage: React.FC = () => {
     }
   };
 
-  const currentBook = materials.find((m) => m.documentId === selectedDocId) || materials[0];
-  const plan = activePaths[0];
+  const startSmartCheck = async () => {
+    setSmartBusy(true);
+    setSmartMessage('');
+    setSmartResult(null);
+    setSmartDone(false);
+    setSmartAnswered([]);
+    setSmartSelected('');
+    try {
+      const res = await api.getNextSmartQuestion([]);
+      if (res.state === 'question' && res.question) {
+        setSmartQuestion(res.question);
+        setSmartMessage(res.message);
+      } else {
+        setSmartQuestion(null);
+        setSmartDone(true);
+        setSmartMessage(res.message);
+      }
+    } catch (err: any) {
+      setSmartQuestion(null);
+      setSmartMessage(err?.message || 'SETU could not start the check.');
+    } finally {
+      setSmartBusy(false);
+    }
+  };
+
+  const submitSmartAnswer = async () => {
+    if (!smartQuestion || !smartSelected.trim()) return;
+    setSmartBusy(true);
+    try {
+      const result = await api.submitAttempt({
+        lessonVersionId: smartQuestion.lessonVersionId,
+        questionKey: smartQuestion.questionKey,
+        response: smartSelected.trim(),
+        hintLevel: 0,
+        hintsUsed: [],
+        elapsedSeconds: 0,
+        attemptKind: 'practice',
+        syncIdempotencyKey: `smart-check-${smartQuestion.questionKey}-${Date.now()}`,
+      });
+      setSmartResult(result);
+      setSmartAnswered((prev) =>
+        prev.includes(smartQuestion.questionKey) ? prev : [...prev, smartQuestion.questionKey]
+      );
+      void fetchPlanning();
+      void fetchSummary();
+    } catch (err: any) {
+      setSmartMessage(err?.message || 'That answer could not be graded. Try again.');
+    } finally {
+      setSmartBusy(false);
+    }
+  };
+
+  const advanceSmartCheck = async () => {
+    setSmartBusy(true);
+    setSmartMessage('');
+    try {
+      const res = await api.getNextSmartQuestion(smartAnswered);
+      if (res.state === 'question' && res.question) {
+        setSmartQuestion(res.question);
+        setSmartSelected('');
+        setSmartResult(null);
+        setSmartMessage(res.message);
+      } else {
+        setSmartQuestion(null);
+        setSmartDone(true);
+        setSmartMessage(res.message);
+        void fetchPlanning();
+      }
+    } catch (err: any) {
+      setSmartMessage(err?.message || 'SETU could not load the next question.');
+    } finally {
+      setSmartBusy(false);
+    }
+  };
+
+  const explicitBook = materials.find((m) => m.documentId === selectedDocId);
+  const plannedBook = materials.find((m) =>
+    activePaths.some((path) => path.documentId === m.documentId)
+  );
+  const currentBook =
+    explicitBook || (selectedDocId ? materials[0] : plannedBook || materials[0]);
+  const matchingPlan = activePaths.find(
+    (path) => path.documentId && path.documentId === currentBook?.documentId
+  );
+  const legacyPaths =
+    activePaths.length > 0 && activePaths.every((path) => !path.documentId);
+  const plan = matchingPlan || (legacyPaths ? activePaths[0] : undefined);
   const readyLesson = plan?.lessons?.find((lesson) => lesson.status === 'ready');
   const pace = studySummary?.pace || user?.accessibilityPreferences?.pace || null;
   const paceLabel =
@@ -337,18 +544,82 @@ export const HomePage: React.FC = () => {
           ? 'Steady pace'
           : 'No pace set';
   const bookStatus = currentBook?.status || '';
-  const phaseRank = ['uploading', 'stored', 'extracting', 'extracted', 'indexing', 'awaiting_review', 'ready'].indexOf(bookStatus);
-  const firstUnitsReady = (plan?.lessons || []).filter((lesson) => lesson.sequence <= 2 && lesson.status === 'ready').length;
-  const laterQueued = (plan?.lessons || []).some((lesson) => lesson.sequence > 2 && lesson.status !== 'ready');
+  const pipelineRank = ['stored', 'extracting', 'indexing', 'awaiting_review', 'ready'].indexOf(bookStatus);
+  const lessons = plan?.lessons || [];
+  const readyCount = lessons.filter((lesson) => lesson.status === 'ready').length;
+  const preparingCount = lessons.filter(
+    (lesson) => lesson.status === 'queued' || lesson.status === 'generating'
+  ).length;
+  const failedCount = lessons.filter((lesson) => lesson.status === 'failed').length;
+  const outlineChapters = reviewOutline?.chapters || [];
 
-  const timeline = [
-    { id: 'upload', label: 'Uploading the file', done: phaseRank > 0 || (!isUploading && !!currentBook), active: isUploading && typeof progressPercent === 'number' },
-    { id: 'stored', label: 'Stored', done: phaseRank > 1, active: bookStatus === 'stored' },
-    { id: 'read', label: 'Reading pages', done: phaseRank > 2, active: bookStatus === 'extracting' },
-    { id: 'index', label: 'Indexing', done: phaseRank > 4, active: bookStatus === 'indexing' || bookStatus === 'extracted' },
-    { id: 'first', label: 'First two units', done: firstUnitsReady === 2, active: !!plan && firstUnitsReady < 2 },
-    { id: 'later', label: 'Remaining units', done: !!plan && (plan.lessons || []).length > 2 && !laterQueued, active: laterQueued },
+  const deskSummary = plan
+    ? [
+        lessons.length > 0 ? `${readyCount} of ${lessons.length} units ready` : 'No units yet',
+        preparingCount > 0 ? `${preparingCount} being prepared` : null,
+        failedCount > 0 ? `${failedCount} could not be prepared` : null,
+      ]
+        .filter(Boolean)
+        .join(' · ')
+    : materials.length > 0
+      ? 'No learning plan for this source yet.'
+      : 'Add a source to build your first learning plan.';
+
+  const pipeline = [
+    { id: 'upload', label: 'Upload the file' },
+    { id: 'stored', label: 'Store the original' },
+    { id: 'read', label: 'Read the pages' },
+    { id: 'index', label: 'Index the passages' },
+    { id: 'review', label: 'Review the plan' },
   ];
+  const activePipelineIndex = isUploading
+    ? typeof progressPercent === 'number'
+      ? 0
+      : pipelineRank >= 0
+        ? pipelineRank + 1
+        : 0
+    : plan
+      ? pipeline.length
+      : pipelineRank >= 0
+        ? pipelineRank + 1
+        : -1;
+  const showPipelineProgress = isUploading || Boolean(currentBook);
+
+  const lessonStatusLabel = (status: string): string => {
+    switch (status) {
+      case 'ready':
+        return 'Open →';
+      case 'generating':
+        return 'Being prepared now';
+      case 'queued':
+        return 'Waiting in the queue';
+      case 'failed':
+        return 'Could not be prepared';
+      default:
+        return `Status: ${status}`;
+    }
+  };
+
+  const documentStatusLabel = (status: string): string => {
+    switch (status) {
+      case 'stored':
+        return 'Stored, waiting for the worker';
+      case 'extracting':
+        return 'Reading pages';
+      case 'indexing':
+        return 'Indexing passages';
+      case 'awaiting_review':
+        return 'Ready for your review';
+      case 'ready':
+        return 'Plan built';
+      case 'needs_ocr':
+        return 'Some pages could not be read';
+      case 'failed':
+        return 'Processing failed';
+      default:
+        return status ? status.replace(/_/g, ' ') : 'Status not reported';
+    }
+  };
 
   const downloadLesson = async (lessonId: string) => {
     if (!user) return;
@@ -368,62 +639,133 @@ export const HomePage: React.FC = () => {
     }
   };
 
-  const subjectLabel = (value: string) => {
-    const base = value.replace(/^subject-/, '').replace(/-/g, ' ');
-    return base.charAt(0).toUpperCase() + base.slice(1);
-  };
+  const subjectOptions = useMemo(() => {
+    if (taxonomy.subjects.length > 0) {
+      return taxonomy.subjects.map((subject) => ({
+        id: subject.id,
+        label: subject.canonicalName || subject.name,
+      }));
+    }
+    return (user?.subjectsInterested || []).map((value) => ({
+      id: value,
+      label: value.replace(/^subject-/, '').replace(/-/g, ' '),
+    }));
+  }, [taxonomy.subjects, user?.subjectsInterested]);
 
   if (!user) {
     return (
       <div className={styles.welcomeContainer}>
         <section className={styles.welcomeHero}>
-          <span className={styles.welcomeBadge}>Adaptive Learning Desk · Classes 6–10</span>
-          <h1 className={styles.welcomeTitle}>Welcome to SETU</h1>
-          <p className={styles.welcomeSubtitle}>
-            A purpose-built, source-grounded learning desk for Indian school students. Learn directly from the sources you add, practice with progressive hints, and test real mastery — online or offline.
-          </p>
-          <div className={styles.welcomeActions}>
-            <button
-              type="button"
-              className={styles.welcomePrimaryBtn}
-              onClick={openTour}
-            >
-              Get Started →
-            </button>
-            <button
-              type="button"
-              className={styles.welcomeSecondaryBtn}
-              onClick={() => setIsAuthModalOpen(true)}
-            >
-              Sign In
-            </button>
+          <div className={styles.welcomeCopy}>
+            <span className={styles.welcomeBadge}>Built for classes 6–10</span>
+            <h1 className={styles.welcomeTitle}>
+              Your books.
+              <br />
+              <span className={styles.welcomeTitleAccent}>Your pace.</span> Your next step.
+            </h1>
+            <p className={styles.welcomeSubtitle}>
+              SETU turns the textbooks and notes you already own into lessons, practice and
+              grounded answers — then adapts to what you actually get right.
+            </p>
+            <div className={styles.welcomeActions}>
+              <button
+                type="button"
+                className={styles.welcomePrimaryBtn}
+                onClick={openTour}
+              >
+                Get Started <ArrowRight size={17} />
+              </button>
+              <button
+                type="button"
+                className={styles.welcomeSecondaryBtn}
+                onClick={() => setIsAuthModalOpen(true)}
+              >
+                I have an account
+              </button>
+            </div>
+            <ul className={styles.welcomeTrust} aria-label="What SETU offers">
+              <li>Source-grounded answers</li>
+              <li>Works offline</li>
+              <li>Adapts to your evidence</li>
+            </ul>
+          </div>
+
+          <div className={styles.welcomeArt} aria-hidden="true">
+            <div className={styles.artCardBack} />
+            <div className={styles.artCard}>
+              <span className={styles.artTag}>Unit 01</span>
+              <strong>Your chapter</strong>
+              <span className={styles.artLine} />
+              <span className={styles.artLineShort} />
+              <div className={styles.artChips}>
+                <span>Read</span>
+                <span>Practice</span>
+                <span>Checkpoint</span>
+              </div>
+            </div>
+            <div className={styles.artBubble}>
+              <Sparkles size={15} /> Page-cited
+            </div>
+            <div className={styles.artStar} />
           </div>
         </section>
 
-        <section className={styles.welcomeCards}>
-          <article className={styles.welcomeCard}>
-            <span className={styles.welcomeCardIcon}>📖</span>
-            <h3 className={styles.welcomeCardTitle}>Source-Grounded Curriculum</h3>
-            <p className={styles.welcomeCardDesc}>
-              Upload textbooks up to 50MB and 300–500 pages. Lessons, hints, and quiz questions cite the pages of the document you upload. If the source does not contain enough evidence, SETU says so instead of inventing an answer.
+        <section className={styles.welcomeSteps} aria-label="How SETU works">
+          <div className={styles.stepsIntro}>
+            <span className={styles.eyebrow}>The desk routine</span>
+            <h2 className={styles.stepsTitle}>From a source you own to evidence you can see.</h2>
+          </div>
+          <ol className={styles.stepSequence}>
+            <li className={styles.welcomeStep}>
+              <span className={styles.stepNumber}>01</span>
+              <div className={styles.stepBody}>
+                <h3 className={styles.stepTitle}>Add a source</h3>
+                <p className={styles.stepText}>
+                  Upload a PDF, DOCX, PPTX, text file, or page image you have the right to use.
+                  SETU keeps the original and indexes the pages it can read.
+                </p>
+              </div>
+            </li>
+            <li className={styles.welcomeStep}>
+              <span className={styles.stepNumber}>02</span>
+              <div className={styles.stepBody}>
+                <h3 className={styles.stepTitle}>Review the plan</h3>
+                <p className={styles.stepText}>
+                  Check the chapters found in the source, then choose the class and subject.
+                  Units are generated only after you approve the plan.
+                </p>
+              </div>
+            </li>
+            <li className={styles.welcomeStep}>
+              <span className={styles.stepNumber}>03</span>
+              <div className={styles.stepBody}>
+                <h3 className={styles.stepTitle}>Learn, solve, test</h3>
+                <p className={styles.stepText}>
+                  Read explanations with page citations, work through guided practice with
+                  progressive hints, then take a checkpoint without hints.
+                </p>
+              </div>
+            </li>
+            <li className={styles.welcomeStep}>
+              <span className={styles.stepNumber}>04</span>
+              <div className={styles.stepBody}>
+                <h3 className={styles.stepTitle}>Ask and return</h3>
+                <p className={styles.stepText}>
+                  Ask doubts grounded in the source. Save ready lessons for offline study;
+                  answers and attempts queued on this device sync when you reconnect.
+                </p>
+              </div>
+            </li>
+          </ol>
+          <aside className={styles.deskNote}>
+            <span className={styles.deskNoteOrb} aria-hidden="true" />
+            <h2 className={styles.deskNoteTitle}>No invented evidence</h2>
+            <p className={styles.deskNoteText}>
+              Lessons cite the pages they came from. If a page cannot be read, SETU names it
+              instead of filling the gap. If the source does not contain enough evidence,
+              an answer says so.
             </p>
-          </article>
-
-          <article className={styles.welcomeCard}>
-            <span className={styles.welcomeCardIcon}>⚡</span>
-            <h3 className={styles.welcomeCardTitle}>Learn · Solve · Test Flow</h3>
-            <p className={styles.welcomeCardDesc}>
-              Step through foundational lessons, solve guided practice items with multi-tier hints, and complete diagnostic checkpoint tests that adapt to your understanding.
-            </p>
-          </article>
-
-          <article className={styles.welcomeCard}>
-            <span className={styles.welcomeCardIcon}>📡</span>
-            <h3 className={styles.welcomeCardTitle}>Durable Offline Support</h3>
-            <p className={styles.welcomeCardDesc}>
-              Download lessons to your browser's IndexedDB. Study without internet, queue doubts offline, and sync automatically as soon as you reconnect.
-            </p>
-          </article>
+          </aside>
         </section>
 
         <AuthModal isOpen={isAuthModalOpen} onClose={() => setIsAuthModalOpen(false)} />
@@ -433,46 +775,343 @@ export const HomePage: React.FC = () => {
 
   return (
     <div className={styles.page}>
-      <header className={styles.greeting}>
-        <div>
-          <h1>{user ? `Hello, ${user.displayName}` : 'Your learning desk'}</h1>
-          <p>{paceLabel}. The first two units are prepared while you start reading. The rest follow in the background.</p>
-        </div>
-        <form onSubmit={handleJoinClassroom} className={styles.joinForm}>
-          <label htmlFor="join-code">Classroom code</label>
-          <div>
-            <input id="join-code" maxLength={15} value={joinCode} onChange={(e) => setJoinCode(e.target.value.toUpperCase())} placeholder="6 characters" />
-            <button type="submit" disabled={isJoining || !joinCode}>{isJoining ? '…' : 'Join'}</button>
+      <header className={styles.hero}>
+        <span className={styles.heroOrb} aria-hidden="true" />
+        <span className={styles.heroRing} aria-hidden="true" />
+        <div className={styles.heroCopy}>
+          <span className={styles.heroKicker}>Your learning desk</span>
+          <h1>Hello, {user.displayName}.</h1>
+          <p>
+            {deskSummary}
+            {pace ? ` · ${paceLabel}` : ''}
+          </p>
+          <div className={styles.heroStats}>
+            <span>
+              <BookOpen size={14} /> {materials.length} {materials.length === 1 ? 'source' : 'sources'}
+            </span>
+            <span>
+              <Target size={14} /> {studyPlan?.taskCount ?? 0} {(studyPlan?.taskCount ?? 0) === 1 ? 'task' : 'tasks'}
+            </span>
+            <span>
+              <Sparkles size={14} /> {readyCount} ready {readyCount === 1 ? 'unit' : 'units'}
+            </span>
           </div>
-          {joinStatus && <p className={joinStatus.success ? styles.ok : styles.bad}>{joinStatus.message}</p>}
-        </form>
+        </div>
+        <div className={styles.heroAside}>
+          <form onSubmit={handleJoinClassroom} className={styles.joinForm}>
+            <label htmlFor="join-code">Join a classroom</label>
+            <div>
+              <input id="join-code" maxLength={15} value={joinCode} onChange={(e) => setJoinCode(e.target.value.toUpperCase())} placeholder="6-character code" />
+              <button type="submit" disabled={isJoining || !joinCode}>{isJoining ? '…' : 'Join'}</button>
+            </div>
+            {joinStatus ? (
+              <p className={joinStatus.success ? styles.ok : styles.bad}>{joinStatus.message}</p>
+            ) : (
+              <p className={styles.heroHint}>Use the code your teacher shared.</p>
+            )}
+          </form>
+        </div>
       </header>
 
       {errorMessage && <div className={styles.errorBanner} role="alert">{errorMessage}</div>}
+      {(loadFailures.paths || loadFailures.materials) && (
+        <div className={styles.errorBanner} role="alert">
+          <span>
+            {loadFailures.materials && loadFailures.paths
+              ? 'SETU could not load your books or your learning plan.'
+              : loadFailures.materials
+                ? 'SETU could not load your books.'
+                : 'SETU could not load your learning plan.'}{' '}
+            Check your connection, then retry.
+          </span>
+          <button
+            type="button"
+            className={styles.bannerAction}
+            onClick={() => void retryWorkspace()}
+            disabled={isDeskLoading}
+          >
+            {isDeskLoading ? 'Retrying…' : 'Retry'}
+          </button>
+        </div>
+      )}
+
+      <section className={styles.deskGrid} aria-label="Adaptive plan and learner understanding">
+        <article className={`${styles.panel} ${styles.planPanel}`}>
+          <div className={styles.panelHead}>
+            <h2>Your adaptive plan</h2>
+            {studyPlan && (
+              <span className={styles.sectionNote}>
+                {studyPlan.bookCount} {studyPlan.bookCount === 1 ? 'book' : 'books'} ·{' '}
+                {studyPlan.taskCount} {studyPlan.taskCount === 1 ? 'task' : 'tasks'}
+              </span>
+            )}
+          </div>
+          {studyPlan ? (
+            <>
+              <p className={styles.planSummary}>{studyPlan.summary}</p>
+              {studyPlan.tasks.length > 0 ? (
+                <ol className={styles.planList}>
+                  {studyPlan.tasks.map((task) => (
+                    <li
+                      key={task.id}
+                      data-subject={task.subjectId}
+                      className={`${styles.planTask} ${
+                        task.kind === 'remediate' || task.kind === 'review'
+                          ? styles.planTaskFocus
+                          : task.kind === 'stretch'
+                            ? styles.planTaskStretch
+                            : ''
+                      }`}
+                    >
+                      <span className={styles.planSlot}>{task.slot}</span>
+                      <div className={styles.planBody}>
+                        <div className={styles.planTaskHead}>
+                          <strong>{task.title}</strong>
+                          <span className={styles.planSubject}>{task.subjectLabel}</span>
+                        </div>
+                        <p>{task.reason}</p>
+                        <div className={styles.planTaskFoot}>
+                          <span>{task.pathTitle}</span>
+                          {task.lessonId && (
+                            <button
+                              type="button"
+                              className={styles.planAction}
+                              onClick={() =>
+                                navigate(`/lesson/${task.lessonId}?pathId=${task.pathId}`)
+                              }
+                            >
+                              {task.actionLabel} →
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    </li>
+                  ))}
+                </ol>
+              ) : (
+                <p className={styles.meta}>
+                  {studyPlan.state === 'preparing'
+                    ? 'Units are still being prepared. The plan fills in as soon as the first unit is ready.'
+                    : 'No task is available from recorded evidence yet. Add a book or answer a question.'}
+                </p>
+              )}
+              {studyPlan.books.length > 0 && (
+                <div className={styles.bookMix} aria-label="Books in this plan">
+                  {studyPlan.books.map((book) => (
+                    <span key={book.pathId} className={styles.bookMixItem}>
+                      <span>{book.subjectLabel}</span>
+                      {book.readyLessons}/{book.totalLessons} ready
+                    </span>
+                  ))}
+                </div>
+              )}
+            </>
+          ) : (
+            <p className={styles.meta}>Reading your books and evidence to build one plan…</p>
+          )}
+        </article>
+
+        <article className={styles.panel}>
+          <div className={styles.panelHead}>
+            <h2>How you learn</h2>
+            {insights && (
+              <span className={styles.sectionNote}>
+                {insights.confidence === 'none' ? 'No evidence yet' : `${insights.confidence} confidence`}
+              </span>
+            )}
+          </div>
+          {insights ? (
+            <>
+              <p className={styles.insightSummary}>{insights.summary}</p>
+              <div className={styles.insightGrid}>
+                <div className={styles.insightTile}>
+                  <span><Target size={13} /> Accuracy</span>
+                  <strong>{insights.accuracy.overall === null ? '—' : `${insights.accuracy.overall}%`}</strong>
+                  <small>{insights.accuracy.trend.replace(/_/g, ' ')}</small>
+                </div>
+                <div className={styles.insightTile}>
+                  <span><Clock3 size={13} /> Best window</span>
+                  <strong>{insights.routine.bestWindow?.label || '—'}</strong>
+                  <small>{insights.routine.consistencyLabel}</small>
+                </div>
+                <div className={styles.insightTile}>
+                  <span><Brain size={13} /> Pace</span>
+                  <strong>
+                    {insights.pace.medianAnswerSeconds === null
+                      ? '—'
+                      : `${insights.pace.medianAnswerSeconds}s`}
+                  </strong>
+                  <small>{insights.pace.label}</small>
+                </div>
+                <div className={styles.insightTile}>
+                  <span><Sparkles size={13} /> Hint use</span>
+                  <strong>{insights.hintReliance.hintRate === null ? '—' : `${insights.hintReliance.hintRate}%`}</strong>
+                  <small>{insights.hintReliance.label}</small>
+                </div>
+              </div>
+              {(insights.mastery.strengths.length > 0 || insights.mastery.focusAreas.length > 0) && (
+                <div className={styles.focusRows}>
+                  {insights.mastery.strengths[0] && (
+                    <p>
+                      <span className={styles.focusTag}>Strength</span>
+                      {insights.mastery.strengths[0].label}
+                      {insights.mastery.strengths[0].score !== null
+                        ? ` · ${insights.mastery.strengths[0].score}%`
+                        : ''}
+                    </p>
+                  )}
+                  {insights.mastery.focusAreas[0] && (
+                    <p>
+                      <span className={`${styles.focusTag} ${styles.focusTagWatch}`}>Focus</span>
+                      {insights.mastery.focusAreas[0].label}
+                      {insights.mastery.focusAreas[0].score !== null
+                        ? ` · ${insights.mastery.focusAreas[0].score}%`
+                        : ''}
+                    </p>
+                  )}
+                </div>
+              )}
+              {insights.habits.length > 0 && (
+                <ul className={styles.habitList}>
+                  {insights.habits.slice(0, 3).map((habit) => (
+                    <li
+                      key={habit.id}
+                      className={
+                        habit.tone === 'watch'
+                          ? styles.habitWatch
+                          : habit.tone === 'positive'
+                            ? styles.habitPositive
+                            : styles.habitNeutral
+                      }
+                    >
+                      <strong>{habit.title}</strong>
+                      <span>{habit.detail}</span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+              <p className={styles.insightEvidence}>{insights.confidenceDetail}</p>
+
+              <div className={styles.smartCheck}>
+                <div className={styles.smartHead}>
+                  <strong>Smart check</strong>
+                  <span>Fewest questions to find the next gap</span>
+                </div>
+                {smartQuestion ? (
+                  <div className={styles.smartBody}>
+                    <p className={styles.smartWhy}>{smartMessage || smartQuestion.why}</p>
+                    <div className={styles.smartMeta}>
+                      {smartQuestion.subjectLabel} · {smartQuestion.conceptLabel} ·{' '}
+                      {smartQuestion.mastery.band.replace(/_/g, ' ')}
+                    </div>
+                    <p className={styles.smartPrompt}>{smartQuestion.prompt}</p>
+                    {smartQuestion.options.length > 0 ? (
+                      <div className={styles.smartOptions}>
+                        {smartQuestion.options.map((option) => (
+                          <button
+                            key={option}
+                            type="button"
+                            className={
+                              smartSelected === option
+                                ? `${styles.smartOption} ${styles.smartOptionOn}`
+                                : styles.smartOption
+                            }
+                            onClick={() => setSmartSelected(option)}
+                            disabled={Boolean(smartResult)}
+                          >
+                            {option}
+                          </button>
+                        ))}
+                      </div>
+                    ) : (
+                      <input
+                        className={styles.smartInput}
+                        value={smartSelected}
+                        onChange={(event) => setSmartSelected(event.target.value)}
+                        placeholder="Type your answer"
+                        disabled={Boolean(smartResult)}
+                      />
+                    )}
+                    {smartResult ? (
+                      <div
+                        className={
+                          smartResult.isCorrect ? styles.smartCorrect : styles.smartWrong
+                        }
+                        role="status"
+                      >
+                        <strong>{smartResult.isCorrect ? 'Correct.' : 'Not quite.'}</strong>{' '}
+                        {smartResult.feedback}
+                        {smartResult.coaching?.rootGap && (
+                          <p>
+                            Root gap: {smartResult.coaching.rootGap.label} —{' '}
+                            {smartResult.coaching.rootGap.reason}
+                          </p>
+                        )}
+                        {smartResult.coaching?.body && (
+                          <p>{smartResult.coaching.body}</p>
+                        )}
+                        <button
+                          type="button"
+                          className={styles.planAction}
+                          onClick={() => void advanceSmartCheck()}
+                          disabled={smartBusy}
+                        >
+                          {smartBusy ? 'Checking…' : 'Next question →'}
+                        </button>
+                      </div>
+                    ) : (
+                      <button
+                        type="button"
+                        className={styles.planAction}
+                        onClick={() => void submitSmartAnswer()}
+                        disabled={smartBusy || !smartSelected.trim()}
+                      >
+                        {smartBusy ? 'Grading…' : 'Answer and continue'}
+                      </button>
+                    )}
+                  </div>
+                ) : smartDone ? (
+                  <div className={styles.smartBody}>
+                    <p className={styles.smartWhy}>{smartMessage}</p>
+                    <button type="button" className={styles.planAction} onClick={() => void startSmartCheck()}>
+                      Run another check
+                    </button>
+                  </div>
+                ) : (
+                  <button
+                    type="button"
+                    className={styles.smartStart}
+                    onClick={() => void startSmartCheck()}
+                    disabled={smartBusy}
+                  >
+                    <Play size={13} /> {smartBusy ? 'Choosing questions…' : 'Start a smart check'}
+                  </button>
+                )}
+                {smartMessage && !smartQuestion && !smartDone && (
+                  <p className={styles.meta}>{smartMessage}</p>
+                )}
+              </div>
+            </>
+          ) : (
+            <p className={styles.meta}>Understanding appears after your first study event or answer.</p>
+          )}
+        </article>
+      </section>
 
       <section className={styles.split}>
         <article className={styles.panel}>
           <h2>Current book</h2>
           {materials.length > 1 && (
-            <div style={{ display: 'flex', gap: '6px', marginBottom: '12px', overflowX: 'auto', paddingBottom: '4px' }}>
+            <div className={styles.bookChips} role="group" aria-label="Choose a source">
               {materials.map((m) => {
                 const isSelected = (currentBook?.documentId === m.documentId);
                 return (
                   <button
                     key={m.documentId}
                     type="button"
+                    className={isSelected ? `${styles.bookChip} ${styles.bookChipActive}` : styles.bookChip}
+                    aria-pressed={isSelected}
                     onClick={() => setSelectedDocId(m.documentId)}
-                    style={{
-                      padding: '4px 10px',
-                      fontSize: '12px',
-                      borderRadius: '6px',
-                      border: '1px solid var(--border-subtle)',
-                      background: isSelected ? 'var(--brand-primary)' : 'var(--bg-canvas)',
-                      color: isSelected ? '#ffffff' : 'var(--ink-primary)',
-                      cursor: 'pointer',
-                      fontWeight: 600,
-                      whiteSpace: 'nowrap'
-                    }}
                   >
                     {m.filename}
                   </button>
@@ -485,9 +1124,12 @@ export const HomePage: React.FC = () => {
               <p className={styles.bookName}>{currentBook.filename}</p>
               <p className={styles.meta}>
                 {currentBook.pageCount ? `${currentBook.pageCount} pages · ` : ''}
-                {bookStatus.replace(/_/g, ' ')}
+                {currentBook.chunkCount ? `${currentBook.chunkCount} indexed passages · ` : ''}
+                {documentStatusLabel(bookStatus)}
               </p>
+              {currentBook.progressMessage && <p className={styles.meta}>{currentBook.progressMessage}</p>}
               {currentBook.errorMessage && <p className={styles.bad}>{currentBook.errorMessage}</p>}
+              {uploadNotice && <p className={styles.meta}>{uploadNotice}</p>}
               <div className={styles.rowActions}>
                 {(bookStatus === 'failed' || bookStatus === 'needs_ocr') && (
                   <button type="button" className={styles.secondary} onClick={() => retryMaterial(currentBook.documentId)}>Retry</button>
@@ -499,35 +1141,35 @@ export const HomePage: React.FC = () => {
                 )}
               </div>
             </>
+          ) : isDeskLoading ? (
+            <p className={styles.meta}>Loading your desk…</p>
           ) : (
             <p className={styles.meta}>No book yet. Upload one and a plan is built from its units.</p>
           )}
         </article>
 
         <article className={styles.panel}>
-          <h2>Units</h2>
-          {plan?.lessons?.length ? (
+          <div className={styles.panelHead}>
+            <h2>Units</h2>
+            {lessons.length > 0 && <span className={styles.sectionNote}>{readyCount}/{lessons.length} ready</span>}
+          </div>
+          {lessons.length > 0 ? (
             <ol className={styles.rail}>
-              {plan.lessons.map((lesson) => (
+              {lessons.map((lesson) => (
                 <li
                   key={lesson.id}
+                  data-status={lesson.status}
                   className={lesson.status === 'ready' ? styles.unitReady : styles.unitWait}
                 >
                   <button
                     type="button"
                     className={styles.unitButton}
                     disabled={lesson.status !== 'ready'}
-                    onClick={() => navigate(`/lesson/${lesson.id}?pathId=${plan.id}`)}
+                    onClick={() => navigate(`/lesson/${lesson.id}?pathId=${plan?.id}`)}
                   >
                     <span>{lesson.sequence}. {lesson.title}</span>
                     <small>
-                      {lesson.status === 'ready'
-                        ? 'Open →'
-                        : lesson.status === 'failed'
-                          ? 'Could not prepare'
-                          : lesson.sequence <= 2
-                            ? 'Preparing'
-                            : 'Queued'}
+                      {lessonStatusLabel(lesson.status)}
                     </small>
                   </button>
                 </li>
@@ -560,7 +1202,13 @@ export const HomePage: React.FC = () => {
             </div>
           </div>
         ) : (
-          <p className={styles.meta}>The first units are not ready yet.</p>
+          <p className={styles.meta}>
+            {lessons.length === 0
+              ? 'No units have been created yet.'
+              : preparingCount > 0
+                ? `No unit is ready yet. ${preparingCount} ${preparingCount === 1 ? 'unit is' : 'units are'} still being prepared.`
+                : 'No unit is ready yet.'}
+          </p>
         )}
         {downloadNotice && (
           <p
@@ -573,7 +1221,10 @@ export const HomePage: React.FC = () => {
       </section>
 
       <section className={styles.panel}>
-        <h2>Upload</h2>
+        <div className={styles.panelHead}>
+          <h2>Add a source</h2>
+          {currentBook && <span className={styles.sectionNote}>Current source</span>}
+        </div>
         <input ref={fileInputRef} type="file" hidden accept=".pdf,.docx,.pptx,.txt,.md,.png,.jpg,.jpeg" onChange={handleFileChange} />
         <button
           type="button"
@@ -586,15 +1237,38 @@ export const HomePage: React.FC = () => {
           <Upload size={22} />
           <span>Choose a PDF, DOCX, PPTX, TXT, MD, or image. Up to 50MB.</span>
         </button>
-        <ol className={styles.timeline}>
-          {timeline.map((step) => (
-            <li key={step.id} className={step.done ? styles.stepDone : step.active ? styles.stepNow : ''}>
-              <span>{step.done ? 'Done' : step.active ? 'Now' : 'Waiting'}</span>
-              {step.label}
-              {step.id === 'upload' && step.active && typeof progressPercent === 'number' ? ` · ${progressPercent}%` : ''}
-            </li>
-          ))}
-        </ol>
+        {showPipelineProgress ? (
+          <>
+            <p className={styles.pipelineCaption}>
+              {isUploading ? 'A source is moving through the desk.' : `Source progress for ${currentBook?.filename}.`}
+            </p>
+            <ol className={styles.pipeline}>
+              {pipeline.map((step, index) => {
+                const state =
+                  index < activePipelineIndex ? 'done' : index === activePipelineIndex ? 'now' : 'waiting';
+                return (
+                  <li
+                    key={step.id}
+                    className={
+                      state === 'done' ? styles.stepDone : state === 'now' ? styles.stepNow : undefined
+                    }
+                  >
+                    <span>{state === 'done' ? 'Done' : state === 'now' ? 'Now' : 'Waiting'}</span>
+                    {step.label}
+                    {step.id === 'upload' && state === 'now' && typeof progressPercent === 'number'
+                      ? ` · ${progressPercent}%`
+                      : ''}
+                  </li>
+                );
+              })}
+            </ol>
+          </>
+        ) : (
+          <p className={styles.meta}>
+            A source moves through upload, storage, page reading, indexing, and your review
+            before any unit is generated.
+          </p>
+        )}
         {isUploading && (
           <DynamicActivityIndicator
             phase={activityPhase}
@@ -686,46 +1360,158 @@ export const HomePage: React.FC = () => {
       </section>
 
       {reviewOutline && (
-        <div className={styles.modalBackdrop} role="dialog" aria-modal="true">
-          <div className={styles.modalContent}>
-            <h2>Plan from {reviewOutline.filename}</h2>
-            <p className={styles.meta}>{reviewOutline.pageCount || 0} pages · {reviewOutline.chunkCount || 0} indexed sections</p>
-            {reviewOutline.chapters && reviewOutline.chapters.length > 0 && (
-              <ul className={styles.notes}>
-                {reviewOutline.chapters.map((chapter, index) => (
-                  <li key={index}>{chapter.title} · pages {chapter.pageStart}–{chapter.pageEnd}</li>
-                ))}
-              </ul>
-            )}
-            <div className={styles.contextRow}>
-              <label className={styles.contextField}>
-                Class
-                <select value={pathGrade} onChange={(e) => setPathGrade(e.target.value)}>
-                  <option value="">Select class</option>
-                  {[6, 7, 8, 9, 10].map((grade) => (
-                    <option key={grade} value={grade}>{`Class ${grade}`}</option>
-                  ))}
-                </select>
-              </label>
-              <label className={styles.contextField}>
-                Subject
-                <select value={pathSubject} onChange={(e) => setPathSubject(e.target.value)}>
-                  <option value="">Select subject</option>
-                  {(user?.subjectsInterested || []).map((subject) => (
-                    <option key={subject} value={subject}>{subjectLabel(subject)}</option>
-                  ))}
-                </select>
-              </label>
-            </div>
-            {(!pathGrade || !pathSubject) && (
-              <p className={styles.contextNote}>Finish onboarding to set your class and subject.</p>
-            )}
-            <div className={styles.rowActions}>
-              <button type="button" className={styles.secondary} onClick={() => setReviewOutline(null)}>Not now</button>
-              <button type="button" className={styles.primary} disabled={isGeneratingPath || !pathGrade || !pathSubject} onClick={handleCreatePathFromOutline}>
-                {isGeneratingPath ? 'Preparing the first units…' : 'Build my learning plan'}
+        <div className={styles.modalBackdrop}>
+          <div
+            className={`${styles.modalContent} ${styles.planDialog}`}
+            ref={planDialogRef}
+            tabIndex={-1}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="plan-dialog-title"
+          >
+            <header className={styles.dialogHead}>
+              <div className={styles.dialogHeading}>
+                <span className={styles.dialogKicker}>Source review</span>
+                <h2 id="plan-dialog-title">{reviewOutline.filename}</h2>
+                <p className={styles.dialogMeta}>
+                  {reviewOutline.pageCount || 0} pages · {reviewOutline.chunkCount || 0} indexed sections
+                </p>
+              </div>
+              <button
+                type="button"
+                className={styles.dialogClose}
+                aria-label="Close plan review"
+                onClick={() => {
+                  if (isGeneratingPath) return;
+                  setReviewOutline(null);
+                  setReviewError(null);
+                }}
+                disabled={isGeneratingPath}
+              >
+                ×
               </button>
+            </header>
+
+            {(reviewError ||
+              reviewOutline.outlineMessage ||
+              (typeof reviewOutline.pagesNeedingOcr === 'number' && reviewOutline.pagesNeedingOcr > 0)) && (
+              <div className={styles.dialogAlerts}>
+                {reviewError && <p className={styles.bad} role="alert">{reviewError}</p>}
+                {reviewOutline.outlineMessage && (
+                  <p className={styles.bad} role="alert">{reviewOutline.outlineMessage}</p>
+                )}
+                {typeof reviewOutline.pagesNeedingOcr === 'number' && reviewOutline.pagesNeedingOcr > 0 && (
+                  <p className={styles.bad}>
+                    {reviewOutline.pagesNeedingOcr}{' '}
+                    {reviewOutline.pagesNeedingOcr === 1 ? 'page' : 'pages'} could not be read after text
+                    extraction and OCR. Those pages are not indexed and will not appear in your lessons.
+                  </p>
+                )}
+              </div>
+            )}
+
+            <div className={styles.dialogBody}>
+              <section className={styles.dialogSetup} aria-label="Plan settings">
+                <div className={styles.dialogCount}>
+                  <span>Outline found</span>
+                  <strong>
+                    {outlineChapters.length} {outlineChapters.length === 1 ? 'chapter' : 'chapters'}
+                  </strong>
+                </div>
+                <p className={styles.dialogHint}>
+                  Check the chapters on the right, then choose the class and subject for this book.
+                  Units are generated only after you approve the plan.
+                </p>
+                <div className={styles.contextRow}>
+                  <label className={styles.contextField}>
+                    Class
+                    <select value={pathGrade} onChange={(e) => setPathGrade(e.target.value)}>
+                      <option value="">Select class</option>
+                      {GRADES.map((grade) => (
+                        <option key={grade} value={grade}>{gradeLabel(grade)}</option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className={styles.contextField}>
+                    Subject
+                    <select
+                      value={pathSubject}
+                      onChange={(e) => setPathSubject(e.target.value)}
+                      disabled={taxonomy.loading || subjectOptions.length === 0}
+                    >
+                      <option value="">
+                        {taxonomy.loading
+                          ? 'Loading subjects…'
+                          : subjectOptions.length > 0
+                            ? 'Select subject'
+                            : 'No subjects available'}
+                      </option>
+                      {subjectOptions.map((option) => (
+                        <option key={option.id} value={option.id}>{option.label}</option>
+                      ))}
+                    </select>
+                  </label>
+                </div>
+                {taxonomy.error && (
+                  <div className={styles.dialogInlineError}>
+                    <span>{taxonomy.error}</span>
+                    <button type="button" onClick={taxonomy.retry}>Retry</button>
+                  </div>
+                )}
+                {!taxonomy.loading && !taxonomy.error && subjectOptions.length === 0 && (
+                  <p className={styles.bad}>
+                    No subjects are configured in the catalogue. Add a subject before building a plan.
+                  </p>
+                )}
+                {!taxonomy.loading && !taxonomy.error && subjectOptions.length > 0 && (!pathGrade || !pathSubject) && (
+                  <p className={styles.contextNote}>Choose a class and subject to continue.</p>
+                )}
+              </section>
+
+              <section className={styles.dialogChapters} aria-label="Chapters found">
+                <div className={styles.dialogChapterHead}>
+                  <h3>Chapters found</h3>
+                  <span>{outlineChapters.length}</span>
+                </div>
+                {outlineChapters.length > 0 ? (
+                  <ol className={styles.chapterList}>
+                    {outlineChapters.map((chapter, index) => (
+                      <li key={`${chapter.title}-${index}`} className={styles.chapterItem}>
+                        <span className={styles.chapterNumber}>{String(index + 1).padStart(2, '0')}</span>
+                        <span className={styles.chapterTitle}>{chapter.title}</span>
+                        <span className={styles.chapterPages}>pp. {chapter.pageStart}–{chapter.pageEnd}</span>
+                      </li>
+                    ))}
+                  </ol>
+                ) : (
+                  <p className={styles.dialogEmpty}>
+                    No chapter headings were detected in this source. SETU will not invent an outline.
+                  </p>
+                )}
+              </section>
             </div>
+
+            <footer className={styles.dialogFooter}>
+              <span>Nothing is generated until you approve this outline.</span>
+              <div className={styles.rowActions}>
+                <button
+                  type="button"
+                  className={styles.secondary}
+                  onClick={() => { setReviewOutline(null); setReviewError(null); }}
+                  disabled={isGeneratingPath}
+                >
+                  Not now
+                </button>
+                <button
+                  type="button"
+                  className={styles.primary}
+                  disabled={isGeneratingPath || !pathGrade || !pathSubject || !reviewOutline.canBuildPath}
+                  onClick={handleCreatePathFromOutline}
+                >
+                  {isGeneratingPath ? 'Preparing the first units…' : 'Build my learning plan'}
+                </button>
+              </div>
+            </footer>
           </div>
         </div>
       )}

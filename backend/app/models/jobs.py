@@ -30,3 +30,4 @@ class GenerationJob(Base):
     __table_args__ = (
         UniqueConstraint("idempotency_key", name="uq_generation_idempotency_key"),
     )
+

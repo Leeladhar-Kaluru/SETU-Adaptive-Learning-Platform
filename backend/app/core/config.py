@@ -17,6 +17,8 @@ class Settings(BaseSettings):
     SUPABASE_SECRET_KEY: str = ""
     
     # Storage settings
+    STORAGE_BACKEND: str = "supabase"  # "supabase" or "local" (local is refused outside local/test)
+    LOCAL_STORAGE_DIR: str = "local_storage"
     STORAGE_BUCKET_DOCUMENTS: str = "setu-documents"
     MAX_UPLOAD_SIZE_BYTES: int = 50 * 1024 * 1024  # 50 MB
     ALLOWED_EXTENSIONS: List[str] = ["pdf", "docx", "pptx", "txt", "md", "jpg", "jpeg", "png"]

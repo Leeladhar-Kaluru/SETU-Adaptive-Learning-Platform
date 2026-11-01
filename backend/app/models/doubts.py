@@ -40,3 +40,4 @@ class SyncEvent(Base):
     __table_args__ = (
         UniqueConstraint("owner_id", "client_event_id", name="uq_owner_client_event"),
     )
+

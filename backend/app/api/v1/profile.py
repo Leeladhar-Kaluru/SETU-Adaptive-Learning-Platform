@@ -17,8 +17,20 @@ from app.models.learning import (
     PathLesson
 )
 from app.models.classroom import Classroom, ClassroomMembership
+from app.services.learner_insights import build_learner_insights
 
 router = APIRouter()
+
+
+def _can_teach(db: Session, profile: UserProfile) -> bool:
+    if profile.role in ("teacher", "admin"):
+        return True
+    return (
+        db.query(Classroom.id)
+        .filter(Classroom.owner_teacher_id == profile.id)
+        .first()
+        is not None
+    )
 
 class ProfileUpdateRequest(BaseModel):
     displayName: Optional[str] = Field(default=None, min_length=1, max_length=150)
@@ -33,7 +45,7 @@ class ProfileUpdateRequest(BaseModel):
     tourCompleted: Optional[bool] = None
 
 @router.get("/dashboard")
-async def get_student_dashboard(
+def get_student_dashboard(
     user_id: uuid.UUID = Depends(get_current_user_id),
     db: Session = Depends(get_db)
 ):
@@ -197,6 +209,11 @@ async def get_student_dashboard(
                 "joinedAt": m.created_at.isoformat() if m.created_at else None
             })
 
+    owned_classrooms = db.query(Classroom).filter(
+        Classroom.owner_teacher_id == user_id
+    ).count()
+    can_teach = _can_teach(db, profile)
+
     return {
         "profile": {
             "id": str(profile.id),
@@ -209,6 +226,7 @@ async def get_student_dashboard(
             "subjectsInterested": profile.subjects_interested or [],
             "learningGoals": profile.learning_goals or [],
             "dailyGoalMinutes": profile.daily_goal_minutes,
+            "canTeach": can_teach,
             "academicContextComplete": bool(
                 profile.grade and profile.board_id and profile.preferred_language
             ),
@@ -225,11 +243,16 @@ async def get_student_dashboard(
         "activityHeatmap": heatmap_list,
         "conceptMastery": mastery_list,
         "recentAttempts": recent_attempts_list,
-        "classrooms": classrooms_list
+        "classrooms": classrooms_list,
+        "understanding": build_learner_insights(db, user_id),
+        "teaching": {
+            "canTeach": can_teach,
+            "ownedClassrooms": owned_classrooms,
+        },
     }
 
 @router.get("")
-async def get_profile(
+def get_profile(
     user_id: uuid.UUID = Depends(get_current_user_id),
     db: Session = Depends(get_db)
 ):
@@ -248,6 +271,7 @@ async def get_profile(
         "subjectsInterested": profile.subjects_interested or [],
         "learningGoals": profile.learning_goals or [],
         "dailyGoalMinutes": profile.daily_goal_minutes,
+        "canTeach": _can_teach(db, profile),
         "accessibilityPreferences": profile.accessibility_preferences or {
             "font_size": "medium",
             "reduced_motion": False,
@@ -259,7 +283,7 @@ async def get_profile(
     }
 
 @router.put("")
-async def update_profile(
+def update_profile(
     req: ProfileUpdateRequest,
     user_id: uuid.UUID = Depends(get_current_user_id),
     db: Session = Depends(get_db)
@@ -350,6 +374,7 @@ async def update_profile(
             "subjectsInterested": profile.subjects_interested or [],
             "learningGoals": profile.learning_goals or [],
             "dailyGoalMinutes": profile.daily_goal_minutes,
+            "canTeach": _can_teach(db, profile),
             "accessibilityPreferences": profile.accessibility_preferences or {},
             "onboardingCompleted": profile.onboarding_completed,
             "tourCompleted": profile.tour_completed

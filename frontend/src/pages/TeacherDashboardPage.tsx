@@ -2,9 +2,11 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   api,
   ClassroomData,
+  ClassGapRow,
   EvidenceBand,
   EvidenceConceptRow,
   EvidenceMatrixRow,
+  RosterMember,
   TeacherActionRow,
 } from '../services/api';
 import { useTaxonomy } from '../hooks/useTaxonomy';
@@ -28,12 +30,17 @@ const STATUS_LABEL: Record<TeacherActionRow['status'], string> = {
   proposed: 'Proposed',
   accepted: 'Accepted',
   dismissed: 'Dismissed',
+  edited: 'Overridden',
   superseded: 'Superseded',
 };
 
 function conceptLabel(conceptId: string): string {
   const words = conceptId.replace(/^concept[-_]/, '').replace(/[-_]/g, ' ');
   return words.charAt(0).toUpperCase() + words.slice(1);
+}
+
+function displayMinutes(minutes: number | undefined): string {
+  return typeof minutes === 'number' ? String(minutes) : '—';
 }
 
 function bandClass(band: EvidenceBand): string {
@@ -60,6 +67,7 @@ export const TeacherDashboardPage: React.FC = () => {
   const taxonomy = useTaxonomy(true);
 
   const [evidenceMatrix, setEvidenceMatrix] = useState<EvidenceMatrixRow[]>([]);
+  const [classGaps, setClassGaps] = useState<ClassGapRow[]>([]);
   const [actions, setActions] = useState<TeacherActionRow[]>([]);
   const [isLoadingMatrix, setIsLoadingMatrix] = useState(false);
   const [matrixError, setMatrixError] = useState<string | null>(null);
@@ -71,6 +79,17 @@ export const TeacherDashboardPage: React.FC = () => {
   const [isSubmittingRec, setIsSubmittingRec] = useState(false);
   const [recFeedback, setRecFeedback] = useState<Feedback>(null);
   const [copied, setCopied] = useState(false);
+  const [roster, setRoster] = useState<RosterMember[]>([]);
+  const [rosterError, setRosterError] = useState<string | null>(null);
+  const [isLoadingRoster, setIsLoadingRoster] = useState(false);
+  const [memberBusyId, setMemberBusyId] = useState<string | null>(null);
+  const [rosterFeedback, setRosterFeedback] = useState<Feedback>(null);
+  const [isRotatingCode, setIsRotatingCode] = useState(false);
+  const [decidingActionId, setDecidingActionId] = useState<string | null>(null);
+  const [actionFeedback, setActionFeedback] = useState<Feedback>(null);
+  const [overrideActionId, setOverrideActionId] = useState<string | null>(null);
+  const [overrideNote, setOverrideNote] = useState('');
+  const [overrideError, setOverrideError] = useState<string | null>(null);
 
   const fetchClassrooms = useCallback(async () => {
     setIsLoadingClassrooms(true);
@@ -103,15 +122,33 @@ export const TeacherDashboardPage: React.FC = () => {
     try {
       const res = await api.getEvidenceMatrix(classroomId);
       setEvidenceMatrix(res.matrix || []);
+      setClassGaps(res.classGaps || []);
       setActions(res.actions || []);
     } catch (err: unknown) {
       setEvidenceMatrix([]);
+      setClassGaps([]);
       setActions([]);
       setMatrixError(
         err instanceof Error ? err.message : 'The roster could not be loaded from SETU.'
       );
     } finally {
       setIsLoadingMatrix(false);
+    }
+  }, []);
+
+  const fetchRoster = useCallback(async (classroomId: string) => {
+    setIsLoadingRoster(true);
+    setRosterError(null);
+    try {
+      const res = await api.getClassroomRoster(classroomId);
+      setRoster(res.members || []);
+    } catch (err: unknown) {
+      setRoster([]);
+      setRosterError(
+        err instanceof Error ? err.message : 'The membership list could not be loaded from SETU.'
+      );
+    } finally {
+      setIsLoadingRoster(false);
     }
   }, []);
 
@@ -123,6 +160,18 @@ export const TeacherDashboardPage: React.FC = () => {
     }, 15000);
     return () => window.clearInterval(timer);
   }, [selectedClassroomId, fetchEvidenceMatrix]);
+
+  useEffect(() => {
+    if (!selectedClassroomId) {
+      setRoster([]);
+      return;
+    }
+    void fetchRoster(selectedClassroomId);
+    const timer = window.setInterval(() => {
+      void fetchRoster(selectedClassroomId);
+    }, 15000);
+    return () => window.clearInterval(timer);
+  }, [selectedClassroomId, fetchRoster]);
 
   const selected = classrooms.find((room) => room.id === selectedClassroomId) || null;
 
@@ -193,6 +242,32 @@ export const TeacherDashboardPage: React.FC = () => {
     setRecFeedback(null);
   };
 
+  const handlePlanSupport = (gap: ClassGapRow) => {
+    const candidate =
+      evidenceMatrix.find(
+        (row) =>
+          !row.profileMissing &&
+          row.concepts.some(
+            (concept) =>
+              concept.conceptId === gap.conceptId &&
+              (concept.band === 'developing' || concept.band === 'not_enough_evidence')
+          )
+      ) || evidenceMatrix.find((row) => !row.profileMissing);
+    if (candidate) {
+      setRecStudentId(candidate.studentId);
+      setRecConcept(gap.conceptId);
+      setRecAction('reinforce_foundations');
+      setRecNote(
+        `${gap.studentsNeedingSupport} of ${gap.studentsWithEvidence} students with evidence in ` +
+          `${conceptLabel(gap.conceptId)} still need support. Start with the source section and one worked example.`
+      );
+      setRecFeedback(null);
+    }
+    document
+      .getElementById('suggestion-panel')
+      ?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  };
+
   const handleSendRecommendation = async (event: React.FormEvent) => {
     event.preventDefault();
     if (!selectedClassroomId) return;
@@ -249,6 +324,113 @@ export const TeacherDashboardPage: React.FC = () => {
     window.setTimeout(() => setCopied(false), 1500);
   };
 
+  const handleRotateCode = async () => {
+    if (!selected) return;
+    setIsRotatingCode(true);
+    setRosterFeedback(null);
+    try {
+      const res = await api.rotateJoinCode(selected.id);
+      setClassrooms((prev) =>
+        prev.map((room) => (room.id === selected.id ? { ...room, joinCode: res.joinCode } : room))
+      );
+      setCopied(false);
+      setRosterFeedback({
+        kind: 'ok',
+        message: 'A new join code was issued. The previous code no longer works.',
+      });
+    } catch (err: unknown) {
+      setRosterFeedback({
+        kind: 'error',
+        message:
+          err instanceof Error ? err.message : 'SETU could not rotate the classroom code.',
+      });
+    } finally {
+      setIsRotatingCode(false);
+    }
+  };
+
+  const handleMemberStatus = async (member: RosterMember, status: 'active' | 'removed') => {
+    if (!selected) return;
+    setMemberBusyId(member.studentId);
+    setRosterFeedback(null);
+    try {
+      await api.updateClassroomMember(selected.id, member.studentId, status);
+      setRoster((prev) =>
+        prev.map((row) =>
+          row.studentId === member.studentId ? { ...row, status } : row
+        )
+      );
+      if (status === 'removed' && recStudentId === member.studentId) {
+        setRecStudentId('');
+        setRecConcept('');
+      }
+      setRosterFeedback({
+        kind: 'ok',
+        message:
+          status === 'removed'
+            ? `${member.studentName} was removed. Their work stays on their own account, but they no longer appear in this classroom.`
+            : `${member.studentName} was restored. They can join this classroom again with the current code.`,
+      });
+      void fetchEvidenceMatrix(selected.id);
+    } catch (err: unknown) {
+      setRosterFeedback({
+        kind: 'error',
+        message:
+          err instanceof Error ? err.message : 'SETU could not update that membership.',
+      });
+    } finally {
+      setMemberBusyId(null);
+    }
+  };
+
+  const handleDecideAction = async (
+    action: TeacherActionRow,
+    decision: 'accept' | 'dismiss' | 'override',
+    notes?: string
+  ) => {
+    setDecidingActionId(action.id);
+    setActionFeedback(null);
+    try {
+      const res = await api.decideTeacherAction(action.id, decision, notes);
+      setActions((prev) =>
+        prev.map((row) =>
+          row.id === action.id
+            ? { ...row, status: res.status as TeacherActionRow['status'] }
+            : row
+        )
+      );
+      setActionFeedback({
+        kind: 'ok',
+        message:
+          decision === 'override'
+            ? 'Suggestion overridden. Your note is stored with it.'
+            : decision === 'accept'
+              ? 'Suggestion marked accepted.'
+              : 'Suggestion dismissed.',
+      });
+      setOverrideActionId(null);
+      setOverrideNote('');
+      setOverrideError(null);
+    } catch (err: unknown) {
+      setActionFeedback({
+        kind: 'error',
+        message:
+          err instanceof Error ? err.message : 'SETU could not update that suggestion.',
+      });
+    } finally {
+      setDecidingActionId(null);
+    }
+  };
+
+  const handleOverrideSubmit = async (action: TeacherActionRow) => {
+    if (overrideNote.trim().length < 3) {
+      setOverrideError('Write why you are overriding this suggestion.');
+      return;
+    }
+    setOverrideError(null);
+    await handleDecideAction(action, 'override', overrideNote.trim());
+  };
+
   const canSend =
     Boolean(selectedClassroomId) &&
     Boolean(recStudentId) &&
@@ -261,6 +443,13 @@ export const TeacherDashboardPage: React.FC = () => {
     !taxonomy.error &&
     taxonomy.boards.length > 0 &&
     taxonomy.subjects.length > 0;
+
+  const selectedBoardName = selected
+    ? taxonomy.boards.find((board) => board.id === selected.boardId)?.name
+    : undefined;
+  const selectedSubjectName = selected
+    ? taxonomy.subjects.find((subject) => subject.id === selected.subjectScope)?.canonicalName
+    : undefined;
 
   const canCreateClass =
     newClassName.trim().length > 0 &&
@@ -275,7 +464,7 @@ export const TeacherDashboardPage: React.FC = () => {
       <header>
         <h1>Classroom</h1>
         <p className={styles.lede}>
-          Members, study time, and the unit they last opened. Nothing here is filled in until a
+          Members, study time, and the unit they last read. Nothing here is filled in until a
           student joins and studies.
         </p>
       </header>
@@ -401,9 +590,16 @@ export const TeacherDashboardPage: React.FC = () => {
 
       {selected && (
         <section className={styles.panel}>
-          <div className={styles.toolbar}>
-            <h2>{selected.name}</h2>
-            <span>
+          <div className={styles.classroomHead}>
+            <div>
+              <h2>{selected.name}</h2>
+              <p className={styles.classroomMeta}>
+                {gradeLabel(selected.grade)} ·{' '}
+                {selectedBoardName || selected.boardId} ·{' '}
+                {selectedSubjectName || selected.subjectScope}
+              </p>
+            </div>
+            <span className={styles.codeGroup}>
               Join code{' '}
               {selected.joinCode ? (
                 <strong className={styles.code}>{selected.joinCode}</strong>
@@ -411,15 +607,31 @@ export const TeacherDashboardPage: React.FC = () => {
                 <em className={styles.codeUnavailable}>Code unavailable</em>
               )}
             </span>
-            <button
-              type="button"
-              className={styles.secondary}
-              onClick={copyCode}
-              disabled={!selected.joinCode}
-            >
-              {copied ? 'Copied' : 'Copy code'}
-            </button>
+            <div className={styles.rowActions}>
+              <button
+                type="button"
+                className={styles.secondary}
+                onClick={copyCode}
+                disabled={!selected.joinCode}
+              >
+                {copied ? 'Copied' : 'Copy code'}
+              </button>
+              <button
+                type="button"
+                className={styles.secondary}
+                onClick={() => void handleRotateCode()}
+                disabled={isRotatingCode}
+              >
+                {isRotatingCode ? 'Rotating…' : 'Rotate code'}
+              </button>
+            </div>
           </div>
+
+          {rosterFeedback && (
+            <p className={rosterFeedback.kind === 'ok' ? styles.ok : styles.bad} role="status">
+              {rosterFeedback.message}
+            </p>
+          )}
 
           {matrixError && (
             <div className={styles.errorBox} role="alert">
@@ -442,13 +654,18 @@ export const TeacherDashboardPage: React.FC = () => {
               after they study.
             </p>
           ) : (
-            <div className={styles.tableWrap}>
+            <div
+              className={styles.tableWrap}
+              role="region"
+              aria-label="Student evidence table"
+              tabIndex={0}
+            >
               <table className={styles.table}>
                 <thead>
                   <tr>
                     <th>Student and evidenced topics</th>
                     <th>Minutes</th>
-                    <th>Last opened</th>
+                    <th>Last read</th>
                     <th>Checks</th>
                     <th>Change</th>
                   </tr>
@@ -484,6 +701,7 @@ export const TeacherDashboardPage: React.FC = () => {
                             {row.concepts.map((concept) => (
                               <li key={concept.conceptId} className={styles.conceptItem}>
                                 <span className={styles.conceptName}>{conceptLabel(concept.conceptId)}</span>
+                                <code className={styles.conceptCode}>{concept.conceptId}</code>
                                 <span className={styles.conceptMeta}>
                                   {BAND_LABEL[concept.band]} · {Math.round(concept.score)}% ·{' '}
                                   {concept.evidenceCount}{' '}
@@ -498,7 +716,7 @@ export const TeacherDashboardPage: React.FC = () => {
                         )}
                       </td>
                       <td>
-                        {row.minutesStudied ?? 0}
+                        <span className={styles.minutesValue}>{displayMinutes(row.minutesStudied)}</span>
                         <span className={styles.bars} aria-hidden="true">
                           {(row.heatmap || []).map((day) => (
                             <i
@@ -515,7 +733,7 @@ export const TeacherDashboardPage: React.FC = () => {
                           ))}
                         </span>
                       </td>
-                      <td>{row.readingTitle || 'Not opened yet'}</td>
+                      <td>{row.readingTitle || 'No active reading session'}</td>
                       <td>
                         {row.accuracyKnown
                           ? `${Math.round(row.accuracyRate * 100)}%`
@@ -536,10 +754,193 @@ export const TeacherDashboardPage: React.FC = () => {
               </table>
             </div>
           )}
+
+          {evidenceMatrix.length > 0 && (
+            <p className={styles.scrollHint}>
+              Scroll the table sideways to see last opened, checks, and change.
+            </p>
+          )}
+
+          {!isLoadingMatrix && evidenceMatrix.length > 0 && (
+            <div className={styles.gapPanel}>
+              <div className={styles.gapHead}>
+                <div>
+                  <h3>Class gap radar</h3>
+                  <p>
+                    Ranked from concept evidence already recorded for this classroom. No estimated
+                    or placeholder scores.
+                  </p>
+                </div>
+                <span className={styles.gapCount}>
+                  {classGaps.length} {classGaps.length === 1 ? 'topic' : 'topics'} with evidence
+                </span>
+              </div>
+              {classGaps.length === 0 ? (
+                <p className={styles.lede}>
+                  Students have joined but have not recorded concept evidence yet. Gaps appear after
+                  their first graded checks.
+                </p>
+              ) : (
+                <ul className={styles.gapList}>
+                  {classGaps.slice(0, 5).map((gap) => {
+                    const bandTotal =
+                      gap.bands.demonstrated +
+                      gap.bands.approaching +
+                      gap.bands.developing +
+                      gap.bands.not_enough_evidence;
+                    return (
+                      <li key={gap.conceptId} className={styles.gapItem}>
+                        <div className={styles.gapItemHead}>
+                          <div>
+                            <strong>{conceptLabel(gap.conceptId)}</strong>
+                            <code className={styles.gapCode}>{gap.conceptId}</code>
+                          </div>
+                          <span
+                            className={
+                              gap.studentsNeedingSupport > 0
+                                ? `${styles.gapNeed} ${styles.gapNeedWatch}`
+                                : `${styles.gapNeed} ${styles.gapNeedOk}`
+                            }
+                          >
+                            {gap.studentsNeedingSupport > 0
+                              ? `${gap.studentsNeedingSupport} need support`
+                              : 'On track'}
+                          </span>
+                        </div>
+                        <div className={styles.gapMeta}>
+                          <span>
+                            {gap.studentsWithEvidence}{' '}
+                            {gap.studentsWithEvidence === 1 ? 'student' : 'students'} with evidence
+                          </span>
+                          <span>
+                            Average{' '}
+                            {gap.averageScore === null ? '—' : `${Math.round(gap.averageScore)}%`}
+                          </span>
+                          <span>Priority {gap.priority}</span>
+                        </div>
+                        <div
+                          className={styles.gapBands}
+                          role="img"
+                          aria-label={`${gap.bands.demonstrated} demonstrated, ${gap.bands.approaching} approaching, ${gap.bands.developing} developing, ${gap.bands.not_enough_evidence} not enough evidence`}
+                        >
+                          {bandTotal > 0 && (
+                            <>
+                              <i
+                                className={styles.gapBandDemonstrated}
+                                style={{ flexGrow: gap.bands.demonstrated }}
+                                title={`${gap.bands.demonstrated} demonstrated`}
+                              />
+                              <i
+                                className={styles.gapBandApproaching}
+                                style={{ flexGrow: gap.bands.approaching }}
+                                title={`${gap.bands.approaching} approaching`}
+                              />
+                              <i
+                                className={styles.gapBandDeveloping}
+                                style={{ flexGrow: gap.bands.developing }}
+                                title={`${gap.bands.developing} developing`}
+                              />
+                              <i
+                                className={styles.gapBandSparse}
+                                style={{ flexGrow: gap.bands.not_enough_evidence }}
+                                title={`${gap.bands.not_enough_evidence} not enough evidence`}
+                              />
+                            </>
+                          )}
+                        </div>
+                        {gap.supportNames.length > 0 && (
+                          <p className={styles.gapNames}>
+                            Needs support: {gap.supportNames.join(', ')}
+                            {gap.studentsNeedingSupport > gap.supportNames.length ? '…' : ''}
+                          </p>
+                        )}
+                        <button
+                          type="button"
+                          className={styles.secondary}
+                          onClick={() => handlePlanSupport(gap)}
+                          disabled={
+                            !evidenceMatrix.some(
+                              (row) => !row.profileMissing && row.concepts.length > 0
+                            )
+                          }
+                        >
+                          Plan support
+                        </button>
+                      </li>
+                    );
+                  })}
+                </ul>
+              )}
+            </div>
+          )}
+
+          <div className={styles.rosterPanel}>
+            <h3>Membership</h3>
+            {rosterError && (
+              <div className={styles.errorBox} role="alert">
+                <strong>Memberships could not be loaded.</strong> {rosterError}
+                <button
+                  type="button"
+                  className={styles.inlineRetry}
+                  onClick={() => void fetchRoster(selected.id)}
+                >
+                  Retry
+                </button>
+              </div>
+            )}
+            {isLoadingRoster && roster.length === 0 && (
+              <p className={styles.lede}>Loading memberships…</p>
+            )}
+            {!isLoadingRoster && !rosterError && roster.length === 0 && (
+              <p className={styles.lede}>No one has joined this classroom yet.</p>
+            )}
+            {roster.length > 0 && (
+              <ul className={styles.rosterList}>
+                {roster.map((member) => (
+                  <li key={member.studentId}>
+                    <div>
+                      <strong>{member.studentName}</strong>
+                      <span
+                        className={
+                          member.status === 'active'
+                            ? `${styles.rosterStatus} ${styles.rosterActive}`
+                            : `${styles.rosterStatus} ${styles.rosterRemoved}`
+                        }
+                      >
+                        {member.status === 'active' ? 'Active' : 'Removed'}
+                      </span>
+                      {member.joinedAt && (
+                        <span className={styles.rosterDate}>
+                          joined {new Date(member.joinedAt).toLocaleDateString()}
+                        </span>
+                      )}
+                    </div>
+                    <button
+                      type="button"
+                      className={styles.secondary}
+                      disabled={memberBusyId === member.studentId}
+                      onClick={() =>
+                        void handleMemberStatus(
+                          member,
+                          member.status === 'active' ? 'removed' : 'active'
+                        )
+                      }
+                    >
+                      {memberBusyId === member.studentId
+                        ? 'Saving…'
+                        : member.status === 'active'
+                          ? 'Remove'
+                          : 'Restore'}
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
         </section>
       )}
 
-      <form className={styles.panel} onSubmit={handleSendRecommendation}>
+      <form id="suggestion-panel" className={styles.panel} onSubmit={handleSendRecommendation}>
         <h2>Suggestion</h2>
         <p className={styles.lede}>
           This note appears on that student’s desk. It is sent only to someone who has joined this
@@ -622,10 +1023,20 @@ export const TeacherDashboardPage: React.FC = () => {
 
       <section className={styles.panel}>
         <h2>Sent suggestions</h2>
+        {actionFeedback && (
+          <p className={actionFeedback.kind === 'ok' ? styles.ok : styles.bad} role="status">
+            {actionFeedback.message}
+          </p>
+        )}
         {actions.length === 0 ? (
           <p className={styles.lede}>No suggestions sent from this classroom yet.</p>
         ) : (
-          <div className={styles.tableWrap}>
+          <div
+            className={styles.tableWrap}
+            role="region"
+            aria-label="Sent suggestions table"
+            tabIndex={0}
+          >
             <table className={styles.table}>
               <thead>
                 <tr>
@@ -634,27 +1045,140 @@ export const TeacherDashboardPage: React.FC = () => {
                   <th>Action</th>
                   <th>Status</th>
                   <th>Date</th>
+                  <th>Decision</th>
                 </tr>
               </thead>
               <tbody>
                 {actions.map((action) => (
-                  <tr key={action.id}>
-                    <td>{studentNameById.get(action.studentId) || 'Student'}</td>
-                    <td>{action.conceptId ? conceptLabel(action.conceptId) : '—'}</td>
-                    <td>{ACTION_LABEL[action.actionType] || action.actionType}</td>
-                    <td>
-                      <span className={`${styles.actionStatus} ${styles[`status_${action.status}`] || ''}`}>
-                        {STATUS_LABEL[action.status] || action.status}
-                      </span>
-                    </td>
-                    <td>
-                      {action.createdAt ? new Date(action.createdAt).toLocaleDateString() : '—'}
-                    </td>
-                  </tr>
+                  <React.Fragment key={action.id}>
+                    <tr>
+                      <td>{studentNameById.get(action.studentId) || 'Not in this roster'}</td>
+                      <td>
+                        {action.conceptId ? (
+                          <span className={styles.topicCell}>
+                            <span>{conceptLabel(action.conceptId)}</span>
+                            <code className={styles.conceptCode}>{action.conceptId}</code>
+                          </span>
+                        ) : (
+                          '—'
+                        )}
+                      </td>
+                      <td>{ACTION_LABEL[action.actionType] || action.actionType}</td>
+                      <td>
+                        <span
+                          className={`${styles.actionStatus} ${
+                            styles[`status_${action.status}`] || ''
+                          }`}
+                        >
+                          {STATUS_LABEL[action.status] || action.status}
+                        </span>
+                      </td>
+                      <td>
+                        {action.createdAt ? new Date(action.createdAt).toLocaleDateString() : '—'}
+                      </td>
+                      <td>
+                        {action.status === 'proposed' ? (
+                          <div className={styles.rowActions}>
+                            <button
+                              type="button"
+                              className={styles.secondary}
+                              disabled={decidingActionId === action.id}
+                              onClick={() => void handleDecideAction(action, 'accept')}
+                            >
+                              Accept
+                            </button>
+                            <button
+                              type="button"
+                              className={styles.secondary}
+                              disabled={decidingActionId === action.id}
+                              onClick={() => void handleDecideAction(action, 'dismiss')}
+                            >
+                              Dismiss
+                            </button>
+                            <button
+                              type="button"
+                              className={styles.secondary}
+                              disabled={decidingActionId === action.id}
+                              onClick={() => {
+                                setOverrideActionId(action.id);
+                                setOverrideNote('');
+                                setOverrideError(null);
+                                setActionFeedback(null);
+                              }}
+                            >
+                              Override
+                            </button>
+                          </div>
+                        ) : (
+                          <span className={styles.actionResolved}>
+                            {action.status === 'edited'
+                              ? 'Your note replaced the suggestion.'
+                              : action.status === 'accepted'
+                                ? action.studentResponse
+                                  ? 'Accepted by the student.'
+                                  : 'Visible to the student.'
+                                : action.status === 'dismissed'
+                                  ? 'Not sent to the student.'
+                                  : 'Replaced by a newer suggestion.'}
+                          </span>
+                        )}
+                      </td>
+                    </tr>
+                    {overrideActionId === action.id && action.status === 'proposed' && (
+                      <tr>
+                        <td colSpan={6}>
+                          <div className={styles.overrideForm}>
+                            <label htmlFor={`override-${action.id}`}>
+                              What should the student do instead?
+                            </label>
+                            <textarea
+                              id={`override-${action.id}`}
+                              value={overrideNote}
+                              maxLength={500}
+                              rows={3}
+                              onChange={(e) => setOverrideNote(e.target.value)}
+                            />
+                            {overrideError && (
+                              <p className={styles.bad} role="alert">
+                                {overrideError}
+                              </p>
+                            )}
+                            <div className={styles.rowActions}>
+                              <button
+                                type="button"
+                                className={styles.primary}
+                                disabled={decidingActionId === action.id}
+                                onClick={() => void handleOverrideSubmit(action)}
+                              >
+                                {decidingActionId === action.id ? 'Saving…' : 'Save override'}
+                              </button>
+                              <button
+                                type="button"
+                                className={styles.secondary}
+                                onClick={() => {
+                                  setOverrideActionId(null);
+                                  setOverrideNote('');
+                                  setOverrideError(null);
+                                }}
+                              >
+                                Cancel
+                              </button>
+                            </div>
+                          </div>
+                        </td>
+                      </tr>
+                    )}
+                  </React.Fragment>
                 ))}
               </tbody>
             </table>
           </div>
+        )}
+
+        {actions.length > 0 && (
+          <p className={styles.scrollHint}>
+            Scroll the table sideways to reach the accept, dismiss, and override buttons.
+          </p>
         )}
       </section>
     </div>

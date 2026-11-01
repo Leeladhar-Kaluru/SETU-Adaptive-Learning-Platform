@@ -51,3 +51,4 @@ def test_demonstrated_mastery():
     
     action = adaptive_engine.determine_next_action(mastery, has_next_lesson=True)
     assert action["action"] == "move_forward"
+

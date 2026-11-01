@@ -1,0 +1,106 @@
+.shell {
+  display: flex;
+  min-height: 100vh;
+  align-items: stretch;
+}
+
+.main {
+  flex: 1;
+  min-width: 0;
+}
+
+.appLoading {
+  padding: 32px;
+  font-size: 14px;
+  color: var(--ink-secondary);
+}
+
+.main:focus {
+  outline: none;
+}
+
+.sessionError {
+  max-width: 560px;
+  margin: 64px auto;
+  padding: 28px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  border: 1px solid var(--border-medium);
+  border-left: 3px solid var(--accent-warm);
+  border-radius: var(--radius-sm);
+  background: var(--bg-surface);
+}
+
+.sessionKicker {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--accent-warm);
+}
+
+.sessionError h1 {
+  margin: 0;
+  font-size: 24px;
+  color: var(--ink-primary);
+}
+
+.sessionError p {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.6;
+  color: var(--ink-secondary);
+}
+
+.sessionActions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-top: 6px;
+}
+
+.sessionActions button {
+  min-height: 38px;
+  padding: 8px 16px;
+  border: 1px solid var(--brand-primary);
+  border-radius: var(--radius-sm);
+  background: var(--brand-primary);
+  color: var(--ink-inverted);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.sessionActions .sessionSignOut {
+  background: transparent;
+  border-color: var(--border-medium);
+  color: var(--ink-secondary);
+}
+
+.skipLink {
+  position: fixed;
+  top: 12px;
+  left: 12px;
+  z-index: 2000;
+  padding: 10px 14px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-surface);
+  color: var(--ink-primary);
+  border: 2px solid var(--brand-primary);
+  font-weight: 600;
+  transform: translateY(-160%);
+  transition: transform var(--transition-fast);
+}
+
+.skipLink:focus {
+  transform: translateY(0);
+  text-decoration: none;
+}
+
+@media (max-width: 800px) {
+  .shell {
+    flex-direction: column;
+  }
+}

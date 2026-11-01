@@ -16,6 +16,7 @@ from app.models.learning import (
     StudyEvent,
 )
 from app.services.adaptive_engine import adaptive_engine
+from app.services.coach_service import build_attempt_coaching
 from app.services.generation_queue import enqueue_lesson_generation
 
 
@@ -41,6 +42,7 @@ class AttemptOutcome:
     mastery: dict
     next_action: dict
     already_recorded: bool
+    coaching: Optional[dict] = None
 
 
 def _normalize(value: Any) -> str:
@@ -70,7 +72,10 @@ def grade_response(question: Question, response: Any) -> tuple[bool, float, str,
         raise UnsupportedQuestionTypeError(
             f"Question type '{question.type}' cannot be graded deterministically."
         )
-    return correct, 1.0 if correct else 0.0, feedback, expected
+    # Model-authored feedback may assert "Correct!" even for a wrong answer, so
+    # only surface it when the server has actually graded the response correct.
+    display_feedback = feedback if correct else f"Not quite. The correct answer is: {expected}."
+    return correct, 1.0 if correct else 0.0, display_feedback, expected
 
 
 def _concept_evidence_records(db: Session, owner_id: uuid.UUID, concept_id: str) -> list[dict]:
@@ -180,7 +185,11 @@ def grade_and_record_attempt(
                 attempt_id=existing.id,
                 is_correct=bool(existing.is_correct),
                 score=float(existing.score or 0.0),
-                feedback=feedback,
+                feedback=(
+                    feedback
+                    if existing.is_correct
+                    else f"Not quite. The correct answer is: {(question.answer_key_json or {}).get('answer')}."
+                ),
                 correct_answer=(question.answer_key_json or {}).get("answer"),
                 mastery=mastery,
                 next_action=adaptive_engine.determine_next_action(mastery),
@@ -293,6 +302,21 @@ def grade_and_record_attempt(
     if not remediation_injected:
         db.commit()
 
+    coaching = build_attempt_coaching(
+        db,
+        owner_id=owner_id,
+        attempt_id=attempt.id,
+        lesson=lesson,
+        lesson_version=lesson_version,
+        question=question,
+        response=response,
+        is_correct=is_correct,
+        hints_used=list(hints_used or []),
+        elapsed_seconds=elapsed_seconds,
+        mastery=mastery,
+        next_action=next_action,
+    )
+
     return AttemptOutcome(
         attempt_id=attempt.id,
         is_correct=is_correct,
@@ -302,4 +326,5 @@ def grade_and_record_attempt(
         mastery=mastery,
         next_action=next_action,
         already_recorded=False,
+        coaching=coaching,
     )

@@ -1,4 +1,6 @@
 import json
+import re
+import asyncio
 import httpx
 from typing import List, Dict, Any, Optional
 from app.core.config import settings
@@ -6,6 +8,19 @@ from app.core.config import settings
 
 class EmbeddingUnavailableError(RuntimeError):
     """The configured embedding provider could not produce valid vectors."""
+
+
+class IncompleteGenerationError(RuntimeError):
+    """The provider stopped before finishing a complete answer."""
+
+
+_TRANSIENT_PROVIDER_MARKERS = (
+    "model is unloaded",
+    "failed to load model",
+    "engine protocol startup was aborted",
+    "terminated",
+    "loading",
+)
 
 
 class AIProviderService:
@@ -62,16 +77,31 @@ class AIProviderService:
 
         url = f"{self.base_url}/embeddings"
         payload = {"model": self.embed_model, "input": clean_inputs}
-        try:
-            async with httpx.AsyncClient(timeout=60.0) as client:
-                response = await client.post(url, json=payload)
-        except Exception as exc:
-            raise EmbeddingUnavailableError("Embedding provider is unreachable.") from exc
+        response = None
+        delays = [1.0, 3.0, 6.0]
+        for attempt in range(len(delays) + 1):
+            try:
+                async with httpx.AsyncClient(timeout=60.0) as client:
+                    response = await client.post(url, json=payload)
+            except Exception as exc:
+                if attempt >= len(delays):
+                    raise EmbeddingUnavailableError("Embedding provider is unreachable.") from exc
+                await asyncio.sleep(delays[attempt])
+                continue
 
-        if response.status_code != 200:
+            if response.status_code == 200:
+                break
+            if attempt < len(delays) and _is_transient_response(response):
+                # Local providers unload models under memory pressure; a
+                # bounded retry lets them reload before the caller gives up.
+                await asyncio.sleep(delays[attempt])
+                continue
             raise EmbeddingUnavailableError(
                 f"Embedding provider returned status {response.status_code}."
             )
+
+        if response is None or response.status_code != 200:
+            raise EmbeddingUnavailableError("Embedding provider did not return a response.")
 
         data = response.json()
         items = sorted(data.get("data", []), key=lambda item: item.get("index", 0))
@@ -93,7 +123,8 @@ class AIProviderService:
         messages: List[Dict[str, str]],
         temperature: float = 0.2,
         max_tokens: int = 1500,
-        response_format: Optional[Dict[str, str]] = None
+        response_format: Optional[Dict[str, Any]] = None,
+        require_complete: bool = False,
     ) -> str:
         """Sends chat completion request to the configured local or hosted LLM."""
         url = f"{self.base_url}/chat/completions"
@@ -107,17 +138,82 @@ class AIProviderService:
             payload["response_format"] = response_format
 
         async with httpx.AsyncClient(timeout=120.0) as client:
-            resp = await client.post(url, json=payload)
-            if resp.status_code != 200:
-                raise RuntimeError(f"LLM chat completion failed with status {resp.status_code}: {resp.text}")
+            resp = None
+            delays = [2.0, 6.0, 12.0]
+            for attempt in range(len(delays) + 1):
+                resp = await client.post(url, json=payload)
+                if resp.status_code == 200:
+                    break
+                if attempt < len(delays) and _is_transient_response(resp):
+                    await asyncio.sleep(delays[attempt])
+                    continue
+                break
+
+            if resp is None or resp.status_code != 200:
+                status_code = resp.status_code if resp is not None else "unknown"
+                body = resp.text if resp is not None else ""
+                raise RuntimeError(
+                    f"LLM chat completion failed with status {status_code}: {body}"
+                )
 
             data = resp.json()
-            message = data["choices"][0]["message"]
+            choice = (data.get("choices") or [{}])[0]
+            message = choice.get("message") or {}
             content = message.get("content") or ""
-            # Handle thinking / reasoning models where content might be empty or wrapped
             if not content.strip() and "reasoning_content" in message:
                 content = message["reasoning_content"]
-            return content.strip()
+            cleaned = _clean_generated_text(content)
+            # Local reasoning models can spend the token budget on hidden
+            # reasoning and return a half-written sentence, sometimes with a
+            # normal finish reason. Prose callers must never store that as a
+            # finished answer. JSON callers validate completeness by parsing.
+            if require_complete and not _is_complete_prose(cleaned):
+                raise IncompleteGenerationError(
+                    "The model stopped before finishing its answer."
+                )
+            if not cleaned:
+                raise IncompleteGenerationError("The model returned an empty answer.")
+            return cleaned
+
+
+_GENERATED_CONTROL_CHARS = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f]")
+
+
+def _is_transient_response(response: httpx.Response) -> bool:
+    if response.status_code >= 500:
+        return True
+    if response.status_code != 400:
+        return False
+    body = (response.text or "").lower()
+    return any(marker in body for marker in _TRANSIENT_PROVIDER_MARKERS)
+
+
+def _clean_generated_text(text: str) -> str:
+    """Removes corrupt bytes and control characters from provider output."""
+    cleaned = str(text).replace("\r\n", "\n").replace("\r", "\n")
+    # A replacement character means the provider emitted an invalid byte.
+    cleaned = re.sub(r"\ufffd\?*", " ", cleaned)
+    cleaned = _GENERATED_CONTROL_CHARS.sub("", cleaned)
+    cleaned = re.sub(r"[ \t]+\n", "\n", cleaned)
+    cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
+    cleaned = re.sub(r"[ \t]{2,}", " ", cleaned)
+    return cleaned.strip()
+
+
+def _is_complete_prose(text: str) -> bool:
+    """True when prose ends like a finished answer, not a cut-off sentence.
+
+    A page reference or numeric answer may legitimately end in a digit. Closing
+    quotes and brackets are ignored. Everything else must end in terminal
+    punctuation; otherwise the caller should retry instead of storing it.
+    """
+    stripped = (text or "").rstrip()
+    while stripped and stripped[-1] in "\"')]}’”":
+        stripped = stripped[:-1].rstrip()
+    if not stripped:
+        return False
+    return stripped[-1] in ".!?" or stripped[-1].isdigit()
+
 
 ai_provider = AIProviderService()
 

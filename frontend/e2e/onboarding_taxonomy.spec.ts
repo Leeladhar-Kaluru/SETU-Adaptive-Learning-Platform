@@ -10,7 +10,7 @@ const languages = [
 
 async function openRegistration(page: import('@playwright/test').Page) {
   await page.goto('/');
-  await page.getByRole('button', { name: 'Get Started →', exact: true }).click();
+  await page.getByRole('button', { name: 'Get Started', exact: true }).click();
   const dialog = page.getByRole('dialog');
   await dialog.getByRole('button', { name: 'Continue' }).click();
   await dialog.getByRole('button', { name: 'Continue to Registration →' }).click();

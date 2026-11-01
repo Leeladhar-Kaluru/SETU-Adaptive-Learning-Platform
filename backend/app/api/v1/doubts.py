@@ -80,6 +80,7 @@ def list_user_doubts(
             "questionText": d.question_text,
             "answerJson": d.answer_json,
             "lastErrorCode": d.last_error_code,
+            "pathId": str(d.path_id) if d.path_id else None,
             "lessonVersionId": str(d.lesson_version_id) if d.lesson_version_id else None,
             "sourcePage": d.source_page,
             "blockId": d.block_id,

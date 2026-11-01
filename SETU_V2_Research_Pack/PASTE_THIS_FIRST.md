@@ -1,0 +1,7 @@
+# Paste this first into the new coding-agent session
+
+Read the entire `SETU_V2_Research_Pack/` folder (or all contents if extracted at the repo root), especially `00_START_HERE.md`, `18_MASTER_AGENT_EXECUTION_PROMPT.md`, `AGENTS.md`, schemas, source catalogue, all `.agents/skills/*/SKILL.md` files, source log and every reference image. Treat the supplied Code Kernel PDF as the challenge source; use external primary sources to validate current technical/licensing constraints.
+
+We are building a fresh SETU V2, not patching old hardcoded Algebra flows. Work in the new project root. First establish real repo/environment/database/provider state without revealing secrets, use relevant actual skills and MCP tools, back up the existing Supabase project and clean only the intended SETU-owned app data/schema after inventory, then implement the P0 vertical slice. Preserve configured env credentials, but never print values. Do not hardcode subject/class/language/source/classroom. Do not use Tailwind v4 or shadcn.
+
+Follow the workflow and mandatory end-of-session report in `18_MASTER_AGENT_EXECUTION_PROMPT.md`. Don't stop at research, a plan, a UI mockup or mocked LLM response. Prove upload → extraction → indexing → retrieval → cited answer → first 2–3 validated lessons → Learn/Solve/Test → offline lesson → offline doubt → idempotent sync/answer. If a live provider isn't configured, implement interfaces/tests and honestly report that live integration as blocked.

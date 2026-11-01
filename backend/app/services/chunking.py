@@ -1,76 +1,67 @@
 import hashlib
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Tuple
+
 
 class ChunkingService:
     def create_chunks(self, pages: List[Dict[str, Any]], chunk_size_words: int = 250, overlap_words: int = 40) -> List[Dict[str, Any]]:
         """
-        Creates semantic chunks preserving page boundaries and heading paths.
-        Each chunk is guaranteed to have page_start, page_end, text, text_hash, and chunk_index.
+        Creates heading-aware chunks with exact page provenance.
+
+        Pages are merged only while they belong to the same heading. Every word
+        keeps the page it came from, so `page_start`/`page_end` and
+        `heading_path` always describe the text inside that chunk.
         """
-        chunks: List[Dict[str, Any]] = []
-        chunk_idx = 0
+        groups: List[Tuple[str, List[Tuple[str, int]]]] = []
+        current_heading = ""
+        current_tokens: List[Tuple[str, int]] = []
 
-        current_words: List[str] = []
-        current_page_start = 1
-        current_page_end = 1
-        current_headings: List[str] = []
-
-        for p in pages:
-            page_num = p["page_number"]
-            page_text = p["text"]
-            
-            # Simple header detection (e.g. lines starting with #, Chapter, Unit, Section)
-            lines = page_text.splitlines()
-            for line in lines:
-                l = line.strip()
-                if l.startswith(("#", "Chapter", "Unit", "Section", "LESSON")):
-                    current_headings = [l.lstrip("# ").strip()]
-
-            words = page_text.split()
-            if not words:
+        for page in pages:
+            page_num = page.get("page_number") or 1
+            page_text = (page.get("text") or "").strip()
+            if not page_text:
                 continue
 
-            # Process words on this page
-            i = 0
-            while i < len(words):
-                if not current_words:
-                    current_page_start = page_num
-                
-                needed = chunk_size_words - len(current_words)
-                slice_words = words[i:i + needed]
-                current_words.extend(slice_words)
-                current_page_end = page_num
-                i += len(slice_words)
+            page_heading = ""
+            for raw_line in page_text.splitlines():
+                line = raw_line.strip()
+                if line.startswith(("#", "Chapter", "CHAPTER", "Unit", "UNIT", "Section", "SECTION", "LESSON")):
+                    page_heading = line.lstrip("# ").strip()
+                    break
 
-                if len(current_words) >= chunk_size_words:
-                    chunk_text = " ".join(current_words)
-                    thash = hashlib.sha256(chunk_text.encode("utf-8")).hexdigest()
-                    chunks.append({
-                        "chunk_index": chunk_idx,
-                        "page_start": current_page_start,
-                        "page_end": current_page_end,
-                        "heading_path": list(current_headings),
-                        "text": chunk_text,
-                        "text_hash": thash
-                    })
-                    chunk_idx += 1
-                    # Keep overlap for continuity
-                    current_words = current_words[-overlap_words:] if overlap_words > 0 else []
-                    current_page_start = page_num
+            if page_heading and current_tokens and page_heading != current_heading:
+                groups.append((current_heading, current_tokens))
+                current_tokens = []
+            if page_heading:
+                current_heading = page_heading
 
-        # Residual chunk
-        if current_words:
-            chunk_text = " ".join(current_words)
-            thash = hashlib.sha256(chunk_text.encode("utf-8")).hexdigest()
-            chunks.append({
-                "chunk_index": chunk_idx,
-                "page_start": current_page_start,
-                "page_end": current_page_end,
-                "heading_path": list(current_headings),
-                "text": chunk_text,
-                "text_hash": thash
-            })
+            current_tokens.extend((word, page_num) for word in page_text.split())
+
+        if current_tokens:
+            groups.append((current_heading, current_tokens))
+
+        chunks: List[Dict[str, Any]] = []
+        chunk_idx = 0
+        for heading, tokens in groups:
+            start = 0
+            while start < len(tokens):
+                end = min(start + chunk_size_words, len(tokens))
+                slice_tokens = tokens[start:end]
+                chunk_text = " ".join(word for word, _ in slice_tokens)
+                page_numbers = [page for _, page in slice_tokens]
+                chunks.append({
+                    "chunk_index": chunk_idx,
+                    "page_start": min(page_numbers),
+                    "page_end": max(page_numbers),
+                    "heading_path": [heading] if heading else [],
+                    "text": chunk_text,
+                    "text_hash": hashlib.sha256(chunk_text.encode("utf-8")).hexdigest(),
+                })
+                chunk_idx += 1
+                if end >= len(tokens):
+                    break
+                start = max(start + 1, end - max(0, overlap_words))
 
         return chunks
+
 
 chunking_service = ChunkingService()

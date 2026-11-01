@@ -7,13 +7,13 @@ export default defineConfig({
     react(),
     VitePWA({
       registerType: 'autoUpdate',
-      includeAssets: ['favicon.ico', 'apple-touch-icon.png', 'masked-icon.svg'],
+      includeAssets: ['favicon.ico', 'apple-touch-icon.png', 'setu-logo.svg'],
       manifest: {
         name: 'SETU',
         short_name: 'SETU',
-        description: 'Source-grounded adaptive learning desk for Classes 6-10',
-        theme_color: '#15233B',
-        background_color: '#F7F6F1',
+        description: 'Source-grounded adaptive learning desk for school students',
+        theme_color: '#FBF7F0',
+        background_color: '#FBF7F0',
         display: 'standalone',
         orientation: 'portrait',
         icons: [
@@ -26,6 +26,12 @@ export default defineConfig({
             src: '/icon-512.png',
             sizes: '512x512',
             type: 'image/png'
+          },
+          {
+            src: '/maskable-icon-512.png',
+            sizes: '512x512',
+            type: 'image/png',
+            purpose: 'maskable'
           }
         ]
       },

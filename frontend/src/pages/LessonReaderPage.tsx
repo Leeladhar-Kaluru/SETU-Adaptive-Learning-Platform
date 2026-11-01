@@ -1,12 +1,54 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useParams, useSearchParams, useNavigate } from 'react-router-dom';
-import { Download, Check, HelpCircle, X, ChevronRight, FileSearch, ArrowLeft, RefreshCw } from 'lucide-react';
+import { Download, Check, HelpCircle, X, ChevronRight, FileSearch, ArrowLeft, RefreshCw, Sparkles } from 'lucide-react';
 import { VisualRenderer } from '../components/visuals/VisualRenderer';
+import { CoachPopup } from '../components/CoachPopup';
+import { Celebration } from '../components/Celebration';
 import { db, saveLessonOffline, getOfflineLesson, queueDoubtOffline, queueAttemptOffline } from '../db/indexedDB';
-import { api, type AttemptResult, type AttemptSubmission } from '../services/api';
+import { api, type AttemptResult, type AttemptSubmission, type CoachCard, type LessonCoaching, type LessonCoachMoment } from '../services/api';
 import { useAuth } from '../context/AuthContext';
+import { useDialogFocus } from '../hooks/useDialogFocus';
 import { syncManager } from '../services/syncManager';
 import styles from './LessonReaderPage.module.css';
+
+function momentToCard(moment: LessonCoachMoment, coaching: LessonCoaching): CoachCard {
+  const keyPoint = coaching.moments.find((item) => item.kind === 'key_point');
+  const source = coaching.moments.find(
+    (item) => (item.kind === 'source_spotlight' || item.kind === 'fun_fact') && item.source
+  );
+  const tip = coaching.moments.find((item) => item.kind === 'study_tip');
+  const base: CoachCard = {
+    id: moment.id,
+    scope: 'lesson',
+    tone: moment.kind === 'challenge' ? 'retry' : 'celebrate',
+    headline: moment.title,
+    body: moment.body,
+    keyPoint: keyPoint ? { title: keyPoint.title, body: keyPoint.body } : null,
+    source:
+      source && source.source
+        ? {
+            page: source.source.page,
+            title: source.source.title,
+            excerpt: source.body,
+          }
+        : null,
+    studyTip: tip ? { title: tip.title, body: tip.body } : null,
+  };
+  if (moment.kind === 'key_point') {
+    base.keyPoint = { title: moment.title, body: moment.body };
+  }
+  if ((moment.kind === 'source_spotlight' || moment.kind === 'fun_fact') && moment.source) {
+    base.source = {
+      page: moment.source.page,
+      title: moment.source.title,
+      excerpt: moment.body,
+    };
+  }
+  if (moment.kind === 'study_tip') {
+    base.studyTip = { title: moment.title, body: moment.body };
+  }
+  return base;
+}
 
 export const LessonReaderPage: React.FC = () => {
   const { lessonId = '' } = useParams<{ lessonId: string }>();
@@ -51,9 +93,19 @@ export const LessonReaderPage: React.FC = () => {
     nextAction: AttemptResult['nextAction'] | null;
     offline: boolean;
   } | null>(null);
+  const [coachCard, setCoachCard] = useState<CoachCard | null>(null);
+  const [lessonCoach, setLessonCoach] = useState<LessonCoaching | null>(null);
+  const [celebration, setCelebration] = useState<{ title: string; subtitle?: string } | null>(null);
+  const coachShown = useRef<Set<string>>(new Set());
+  const coachMomentIndex = useRef(0);
 
   const questionStartedAt = useRef<Record<string, number>>({});
   const readingStartedAt = useRef<number | null>(null);
+  const citationDrawerRef = useRef<HTMLDivElement>(null);
+  const doubtDrawerRef = useRef<HTMLDivElement>(null);
+
+  useDialogFocus(citationDrawerRef, Boolean(activeCitation), () => setActiveCitation(null));
+  useDialogFocus(doubtDrawerRef, doubtDrawerOpen, () => setDoubtDrawerOpen(false));
 
   const markQuestionStarted = (questionId: string) => {
     if (!questionStartedAt.current[questionId]) {
@@ -98,6 +150,19 @@ export const LessonReaderPage: React.FC = () => {
       setLessonPackage(pkg);
       setNotReady(false);
       if (!readingStartedAt.current) readingStartedAt.current = Date.now();
+      void api
+        .getLessonCoaching(lessonId)
+        .then((coaching) => {
+          setLessonCoach(coaching);
+          if (!coachShown.current.has(lessonId) && coaching.moments.length > 0) {
+            const auto =
+              coaching.moments.find((moment) => moment.id === coaching.autoShowId) ||
+              coaching.moments[0];
+            coachShown.current.add(lessonId);
+            setCoachCard(momentToCard(auto, coaching));
+          }
+        })
+        .catch(() => undefined);
     } catch (err: any) {
       setLessonPackage(null);
       setNotReady(true);
@@ -189,7 +254,8 @@ export const LessonReaderPage: React.FC = () => {
           answerPayload: {
             answer: answerPayload.answer,
             citations: answerPayload.citations || [],
-            answeredAt: answerPayload.answeredAt || new Date().toISOString()
+            answeredAt: answerPayload.answeredAt || new Date().toISOString(),
+            limitations: answerPayload.limitations || null
           }
         });
 
@@ -266,6 +332,13 @@ export const LessonReaderPage: React.FC = () => {
     setPracticeAnswers(prev => ({ ...prev, [qId]: opt }));
   };
 
+  const openCoachMoment = () => {
+    if (!lessonCoach || lessonCoach.moments.length === 0) return;
+    const index = coachMomentIndex.current % lessonCoach.moments.length;
+    coachMomentIndex.current += 1;
+    setCoachCard(momentToCard(lessonCoach.moments[index], lessonCoach));
+  };
+
   const handlePracticeSubmit = async (q: any) => {
     const selected = practiceAnswers[q.questionId];
     if (!selected || !lessonPackage?.lessonVersionId || !user) return;
@@ -289,6 +362,9 @@ export const LessonReaderPage: React.FC = () => {
     try {
       const result = await api.submitAttempt(payload);
       setAttemptResults(prev => ({ ...prev, [q.questionId]: result }));
+      if (result.coaching) {
+        setCoachCard(result.coaching);
+      }
     } catch (err: any) {
       if (!navigator.onLine) {
         await queueAttemptOffline({
@@ -332,12 +408,16 @@ export const LessonReaderPage: React.FC = () => {
 
   const handleTestSubmit = async () => {
     if (!lessonPackage?.checkpointTest?.length || !lessonPackage.lessonVersionId || !user) return;
+    const unanswered = lessonPackage.checkpointTest.some((q: any) => !testAnswers[q.questionId]?.trim());
+    if (unanswered) return;
     setTestSubmitted(true);
+    setCheckpointResult(null);
+    setAttemptErrors(prev => ({ ...prev, checkpoint: '' }));
     const results: AttemptResult[] = [];
     let queuedOffline = false;
 
     for (const q of lessonPackage.checkpointTest) {
-      const selected = testAnswers[q.questionId];
+      const selected = testAnswers[q.questionId]?.trim();
       if (!selected) continue;
       const startedAt = questionStartedAt.current[q.questionId] || Date.now();
       const elapsedSeconds = Math.max(0, Math.min(1800, Math.round((Date.now() - startedAt) / 1000)));
@@ -372,13 +452,10 @@ export const LessonReaderPage: React.FC = () => {
           await syncManager.refreshPending();
           queuedOffline = true;
         } else {
-          setCheckpointResult({
-            correct: 0,
-            total: lessonPackage.checkpointTest.length,
-            mastery: null,
-            nextAction: null,
-            offline: false,
-          });
+          // A transport or grading failure is not a score. Keep the answers,
+          // offer an honest retry, and never render "0 of N correct".
+          setTestSubmitted(false);
+          setCheckpointResult(null);
           setAttemptErrors(prev => ({
             ...prev,
             checkpoint: err?.message || 'The checkpoint could not be graded. Try again.',
@@ -397,13 +474,31 @@ export const LessonReaderPage: React.FC = () => {
       nextAction: last?.nextAction || null,
       offline: queuedOffline,
     });
+    const coachingCard = results.find((item) => item.coaching)?.coaching;
+    if (coachingCard) setCoachCard(coachingCard);
+    if (queuedOffline) {
+      setCelebration({
+        title: 'Checkpoint saved on this device',
+        subtitle: 'It will be graded and added to your evidence when you reconnect.',
+      });
+    } else if (results.length > 0) {
+      setCelebration({
+        title:
+          correct === lessonPackage.checkpointTest.length
+            ? 'Checkpoint complete — every answer correct'
+            : `Checkpoint complete · ${correct} of ${lessonPackage.checkpointTest.length}`,
+        subtitle:
+          last?.mastery?.explanation ||
+          'Your answers are recorded and the next plan is already adapting.',
+      });
+    }
   };
 
   if (loading) {
     return (
-      <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '60vh', gap: '8px', color: '#4A5873' }}>
+      <div className={styles.loadingState}>
         <RefreshCw size={18} className="spin" />
-        <span>Loading lesson package...</span>
+        <span>Opening lesson package…</span>
       </div>
     );
   }
@@ -411,10 +506,11 @@ export const LessonReaderPage: React.FC = () => {
   if (!lessonPackage) {
     return (
       <div className={styles.container}>
-        <div style={{ padding: '32px', textAlign: 'center' }}>
-          <h2>{notReady ? 'Preparing this lesson' : 'Lesson not found'}</h2>
-          <p>{readyMessage}</p>
-          <button className={styles.offlineBtn} onClick={() => navigate('/')}>
+        <div className={styles.emptyState}>
+          <span className={styles.eyebrow}>Lesson</span>
+          <h2 className={styles.emptyTitle}>{notReady ? 'Preparing this lesson' : 'Lesson not found'}</h2>
+          <p className={styles.emptyText}>{readyMessage}</p>
+          <button type="button" className={styles.offlineBtn} onClick={() => navigate('/')}>
             <ArrowLeft size={16} /> Return to Desk
           </button>
         </div>
@@ -422,25 +518,39 @@ export const LessonReaderPage: React.FC = () => {
     );
   }
 
+  const subjectLabel = String(lessonPackage.subjectId || '')
+    .replace(/^subject-/, '')
+    .replace(/-/g, ' ');
+
   return (
     <div className={styles.container}>
       {/* Top Header Card */}
       <div className={styles.headerCard}>
         <div className={styles.headerMain}>
           <div className={styles.metaRow}>
-            <button onClick={() => navigate('/')} style={{ display: 'flex', alignItems: 'center', gap: '4px', color: '#4A5873', fontSize: '13px', cursor: 'pointer' }}>
+            <button type="button" className={styles.backButton} onClick={() => navigate('/')}>
               <ArrowLeft size={14} /> Desk
             </button>
-            <span>•</span>
+            <span aria-hidden="true">·</span>
             <span className={styles.gradeBadge}>Class {lessonPackage.grade}</span>
-            <span>•</span>
-            <span>{lessonPackage.subjectId}</span>
+            <span aria-hidden="true">·</span>
+            <span className={styles.metaCode}>{subjectLabel}</span>
           </div>
           <h1 className={styles.lessonTitle}>{lessonPackage.title}</h1>
         </div>
 
         <div className={styles.actionsRow}>
           <button
+            type="button"
+            className={styles.offlineBtn}
+            onClick={openCoachMoment}
+            disabled={!lessonCoach || lessonCoach.moments.length === 0}
+            title="Grounded key points, source lines and study tips from this lesson"
+          >
+            <Sparkles size={14} /> Coach
+          </button>
+          <button
+            type="button"
             className={`${styles.offlineBtn} ${isSavedOffline ? styles.offlineBtnSaved : ''}`}
             onClick={handleSaveOffline}
             disabled={savingOffline || isSavedOffline}
@@ -458,6 +568,7 @@ export const LessonReaderPage: React.FC = () => {
           </button>
 
           <button
+            type="button"
             className={styles.offlineBtn}
             onClick={() => openDoubtDrawer()}
             title="Ask a doubt grounded strictly in the source material"
@@ -466,7 +577,7 @@ export const LessonReaderPage: React.FC = () => {
           </button>
         </div>
         {saveOfflineError && (
-          <p role="alert" style={{ marginTop: 8, fontSize: 13, color: 'var(--color-error)' }}>
+          <p role="alert" className={styles.inlineError}>
             {saveOfflineError}
           </p>
         )}
@@ -475,22 +586,25 @@ export const LessonReaderPage: React.FC = () => {
       {/* Learn / Solve / Test Tab Navigation */}
       <div className={styles.tabBar}>
         <button
+          type="button"
           className={`${styles.tab} ${activeTab === 'learn' ? styles.tabActive : ''}`}
           onClick={() => setActiveTab('learn')}
         >
-          1. Learn (Source Explanation)
+          1. Learn · Source explanation
         </button>
         <button
+          type="button"
           className={`${styles.tab} ${activeTab === 'solve' ? styles.tabActive : ''}`}
           onClick={() => setActiveTab('solve')}
         >
-          2. Solve (Guided Practice)
+          2. Solve · Guided practice
         </button>
         <button
+          type="button"
           className={`${styles.tab} ${activeTab === 'test' ? styles.tabActive : ''}`}
           onClick={() => setActiveTab('test')}
         >
-          3. Test (Checkpoint Assessment)
+          3. Test · Checkpoint
         </button>
       </div>
 
@@ -521,20 +635,22 @@ export const LessonReaderPage: React.FC = () => {
               <p className={styles.blockContent}>
                 {block.content}
                 {block.sourceRefs?.map((ref: any, rIdx: number) => (
-                  <span
+                  <button
                     key={rIdx}
+                    type="button"
                     className={styles.citationBadge}
                     onClick={() => setActiveCitation(ref)}
-                    title={`Click to view source evidence (Page ${ref.pageStart})`}
+                    title={`Open source evidence from page ${ref.pageStart}`}
                   >
                     <FileSearch size={11} /> Page {ref.pageStart}
-                  </span>
+                  </button>
                 ))}
               </p>
 
               <div className={styles.doubtPromptBar}>
                 <span className={styles.doubtText}>Have a question on this section?</span>
                 <button
+                  type="button"
                   className={styles.doubtBtn}
                   onClick={() => openDoubtDrawer(block.blockId, block.sourceRefs?.[0]?.pageStart)}
                 >
@@ -547,25 +663,26 @@ export const LessonReaderPage: React.FC = () => {
           {/* Worked Examples */}
           {lessonPackage.workedExamples?.map((we: any, idx: number) => (
             <div key={idx} className={styles.workedExampleBox}>
-              <div className={styles.workedExamplePrompt}>💡 Worked Problem: {we.prompt}</div>
+              <span className={styles.workedKicker}>Worked problem</span>
+              <div className={styles.workedExamplePrompt}>{we.prompt}</div>
               {we.steps?.map((step: string, sIdx: number) => (
                 <div key={sIdx} className={styles.workedExampleStep}>
-                  Step {sIdx + 1}: {step}
+                  <span className={styles.stepIndex}>{String(sIdx + 1).padStart(2, '0')}</span>
+                  {step}
                 </div>
               ))}
               <div className={styles.workedExampleAnswer}>
-                ✓ Solution: {we.answer}
+                <span className={styles.workedKicker}>Solution</span>
+                {we.answer}
               </div>
             </div>
           ))}
 
           {/* Takeaways */}
           {lessonPackage.takeaways?.length > 0 && (
-            <div style={{ marginTop: '16px', padding: '20px', background: '#FAFAF8', border: '1px solid #D9DEEA', borderRadius: '8px' }}>
-              <h3 style={{ fontSize: '15px', fontWeight: 700, marginBottom: '8px', color: '#15233B' }}>
-                Key Takeaways
-              </h3>
-              <ul style={{ paddingLeft: '20px', fontSize: '14px', lineHeight: 1.6, color: '#4A5873' }}>
+            <div className={styles.takeawaysBox}>
+              <h3 className={styles.takeawaysTitle}>Key takeaways</h3>
+              <ul className={styles.takeawaysList}>
                 {lessonPackage.takeaways.map((t: string, i: number) => (
                   <li key={i}>{t}</li>
                 ))}
@@ -573,8 +690,8 @@ export const LessonReaderPage: React.FC = () => {
             </div>
           )}
 
-          <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '16px' }}>
-            <button className={styles.offlineBtn} onClick={() => setActiveTab('solve')}>
+          <div className={styles.nextRow}>
+            <button type="button" className={styles.offlineBtn} onClick={() => setActiveTab('solve')}>
               Proceed to Practice Problems <ChevronRight size={16} />
             </button>
           </div>
@@ -583,13 +700,14 @@ export const LessonReaderPage: React.FC = () => {
 
       {/* TAB 2: SOLVE (GUIDED PRACTICE) */}
       {activeTab === 'solve' && (
-        <div className={styles.contentCard}>
-          <h2 style={{ fontSize: '20px', fontWeight: 700, color: '#15233B' }}>
-            Guided Practice Problems
-          </h2>
-          <p style={{ fontSize: '14px', color: '#4A5873', marginTop: '-16px' }}>
-            Work through these problems with progressive hints. Attempts are recorded for your teacher evidence matrix.
-          </p>
+        <div className={styles.contentCard} aria-label="Guided practice">
+          <div className={styles.sectionHead}>
+            <h2 className={styles.sectionTitle}>Guided practice</h2>
+            <p className={styles.sectionLede}>
+              Work through these problems with progressive hints. Attempts are recorded for
+              your teacher's evidence view.
+            </p>
+          </div>
 
           {lessonPackage.practice?.map((q: any) => {
             const result = attemptResults[q.questionId];
@@ -603,32 +721,50 @@ export const LessonReaderPage: React.FC = () => {
               <div key={q.questionId} className={styles.questionCard}>
                 <div className={styles.questionPrompt}>{q.prompt}</div>
 
-                <div className={styles.optionsList}>
-                  {q.options?.map((opt: string, idx: number) => {
-                    const isThisSelected = selected === opt;
-                    let optClass = styles.optionBtn;
-                    if (isSubmitted) {
-                      if (opt === result?.correctAnswer) optClass = `${styles.optionBtn} ${styles.optionCorrect}`;
-                      else if (isThisSelected) optClass = `${styles.optionBtn} ${styles.optionIncorrect}`;
-                    } else if (isThisSelected) {
-                      optClass = `${styles.optionBtn} ${styles.optionSelected}`;
-                    }
+                {q.options?.length ? (
+                  <div className={styles.optionsList}>
+                    {q.options.map((opt: string, idx: number) => {
+                      const isThisSelected = selected === opt;
+                      let optClass = styles.optionBtn;
+                      if (isSubmitted) {
+                        if (opt === result?.correctAnswer) optClass = `${styles.optionBtn} ${styles.optionCorrect}`;
+                        else if (isThisSelected) optClass = `${styles.optionBtn} ${styles.optionIncorrect}`;
+                      } else if (isThisSelected) {
+                        optClass = `${styles.optionBtn} ${styles.optionSelected}`;
+                      }
 
-                    return (
-                      <button
-                        key={idx}
-                        className={optClass}
-                        onClick={() => handlePracticeSelect(q.questionId, opt)}
-                      >
-                        {String.fromCharCode(65 + idx)}. {opt}
-                      </button>
-                    );
-                  })}
-                </div>
+                      return (
+                        <button
+                          key={idx}
+                          type="button"
+                          className={optClass}
+                          onClick={() => handlePracticeSelect(q.questionId, opt)}
+                          disabled={isSubmitted}
+                        >
+                          {String.fromCharCode(65 + idx)}. {opt}
+                        </button>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <label className={styles.textAnswer}>
+                    <span className={styles.textAnswerLabel}>Your answer</span>
+                    <input
+                      className={styles.textAnswerInput}
+                      type="text"
+                      inputMode={q.type === 'numeric' ? 'decimal' : 'text'}
+                      value={selected || ''}
+                      onChange={(event) => handlePracticeSelect(q.questionId, event.target.value)}
+                      placeholder={q.type === 'numeric' ? 'Enter a number' : 'Type your answer'}
+                      disabled={isSubmitted}
+                      autoComplete="off"
+                    />
+                  </label>
+                )}
 
                 {/* Progressive Hints */}
                 {q.hints?.length > 0 && (
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                  <div className={styles.hintsList}>
                     {q.hints.slice(0, hintCount).map((hint: string, hIdx: number) => (
                       <div key={hIdx} className={styles.hintBox}>
                         <strong>Hint {hIdx + 1}:</strong> {hint}
@@ -636,10 +772,11 @@ export const LessonReaderPage: React.FC = () => {
                     ))}
                     {!isSubmitted && hintCount < q.hints.length && (
                       <button
+                        type="button"
+                        className={styles.revealHintBtn}
                         onClick={() => handleRevealHint(q.questionId)}
-                        style={{ alignSelf: 'flex-start', fontSize: '12px', fontWeight: 600, color: '#4055D9', textDecoration: 'underline' }}
                       >
-                        Need help? Reveal Hint {hintCount + 1}
+                        Need help? Reveal hint {hintCount + 1}
                       </button>
                     )}
                   </div>
@@ -648,35 +785,38 @@ export const LessonReaderPage: React.FC = () => {
                 {/* Submit Action & Feedback */}
                 {!isSubmitted ? (
                   <button
-                    className={styles.offlineBtn}
-                    style={{ alignSelf: 'flex-start', background: '#4055D9', color: '#FFFFFF' }}
+                    type="button"
+                    className={`${styles.offlineBtn} ${styles.submitBtn}`}
                     onClick={() => handlePracticeSubmit(q)}
-                    disabled={!selected || isSubmitting}
+                    disabled={!selected?.trim() || isSubmitting}
                   >
                     {isSubmitting ? 'Checking…' : 'Check Answer'}
                   </button>
                 ) : (
-                  <div className={`${styles.feedbackBox} ${isCorrect ? styles.feedbackSuccess : styles.feedbackWarning}`}>
-                    <strong>{isCorrect ? '✓ Correct.' : '✕ Not quite.'}</strong> {result?.feedback}
+                  <div
+                    className={`${styles.feedbackBox} ${isCorrect ? styles.feedbackSuccess : styles.feedbackWarning}`}
+                    role="status"
+                  >
+                    <strong>{isCorrect ? 'Correct.' : 'Incorrect.'}</strong> {result?.feedback}
                     {result?.nextAction?.title ? (
-                      <div style={{ marginTop: '6px', fontSize: '13px' }}>
+                      <div className={styles.feedbackNext}>
                         {result.nextAction.title}: {result.nextAction.reason}
                       </div>
                     ) : null}
                   </div>
                 )}
                 {attemptErrors[q.questionId] && (
-                  <div className={styles.feedbackWarning}>{attemptErrors[q.questionId]}</div>
+                  <div className={styles.feedbackWarning} role="status">{attemptErrors[q.questionId]}</div>
                 )}
               </div>
             );
           })}
 
-          <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '16px' }}>
-            <button className={styles.offlineBtn} onClick={() => setActiveTab('learn')}>
+          <div className={styles.betweenRow}>
+            <button type="button" className={styles.offlineBtn} onClick={() => setActiveTab('learn')}>
               <ArrowLeft size={16} /> Back to Learn
             </button>
-            <button className={styles.offlineBtn} onClick={() => setActiveTab('test')}>
+            <button type="button" className={styles.offlineBtn} onClick={() => setActiveTab('test')}>
               Start Checkpoint Test <ChevronRight size={16} />
             </button>
           </div>
@@ -685,13 +825,14 @@ export const LessonReaderPage: React.FC = () => {
 
       {/* TAB 3: TEST (CHECKPOINT ASSESSMENT) */}
       {activeTab === 'test' && (
-        <div className={styles.contentCard}>
-          <h2 style={{ fontSize: '20px', fontWeight: 700, color: '#15233B' }}>
-            Checkpoint Test
-          </h2>
-          <p style={{ fontSize: '14px', color: '#4A5873', marginTop: '-16px' }}>
-            Independent assessment without hints. Complete all questions to calculate your adaptive mastery score.
-          </p>
+        <div className={styles.contentCard} aria-label="Checkpoint test">
+          <div className={styles.sectionHead}>
+            <h2 className={styles.sectionTitle}>Checkpoint test</h2>
+            <p className={styles.sectionLede}>
+              Independent assessment without hints. Answer every question to calculate your
+              mastery score from recorded evidence.
+            </p>
+          </div>
 
           {lessonPackage.checkpointTest?.map((q: any, qIdx: number) => {
             const selected = testAnswers[q.questionId];
@@ -702,83 +843,100 @@ export const LessonReaderPage: React.FC = () => {
                   {qIdx + 1}. {q.prompt}
                 </div>
 
-                <div className={styles.optionsList}>
-                  {q.options?.map((opt: string, optIdx: number) => {
-                    const isSelected = selected === opt;
-                    let optClass = styles.optionBtn;
-                    if (testSubmitted) {
-                      if (opt === result?.correctAnswer) optClass = `${styles.optionBtn} ${styles.optionCorrect}`;
-                      else if (isSelected) optClass = `${styles.optionBtn} ${styles.optionIncorrect}`;
-                    } else if (isSelected) {
-                      optClass = `${styles.optionBtn} ${styles.optionSelected}`;
-                    }
+                {q.options?.length ? (
+                  <div className={styles.optionsList}>
+                    {q.options.map((opt: string, optIdx: number) => {
+                      const isSelected = selected === opt;
+                      let optClass = styles.optionBtn;
+                      if (testSubmitted) {
+                        if (opt === result?.correctAnswer) optClass = `${styles.optionBtn} ${styles.optionCorrect}`;
+                        else if (isSelected) optClass = `${styles.optionBtn} ${styles.optionIncorrect}`;
+                      } else if (isSelected) {
+                        optClass = `${styles.optionBtn} ${styles.optionSelected}`;
+                      }
 
-                    return (
-                      <button
-                        key={optIdx}
-                        className={optClass}
-                        onClick={() => handleTestSelect(q.questionId, opt)}
-                      >
-                        {String.fromCharCode(65 + optIdx)}. {opt}
-                      </button>
-                    );
-                  })}
-                </div>
+                      return (
+                        <button
+                          key={optIdx}
+                          type="button"
+                          className={optClass}
+                          onClick={() => handleTestSelect(q.questionId, opt)}
+                          disabled={testSubmitted}
+                        >
+                          {String.fromCharCode(65 + optIdx)}. {opt}
+                        </button>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <label className={styles.textAnswer}>
+                    <span className={styles.textAnswerLabel}>Your answer</span>
+                    <input
+                      className={styles.textAnswerInput}
+                      type="text"
+                      inputMode={q.type === 'numeric' ? 'decimal' : 'text'}
+                      value={selected || ''}
+                      onChange={(event) => handleTestSelect(q.questionId, event.target.value)}
+                      placeholder={q.type === 'numeric' ? 'Enter a number' : 'Type your answer'}
+                      disabled={testSubmitted}
+                      autoComplete="off"
+                    />
+                  </label>
+                )}
               </div>
             );
           })}
 
           {!testSubmitted ? (
-            <button
-              className={styles.offlineBtn}
-              style={{ alignSelf: 'flex-start', background: '#4055D9', color: '#FFFFFF', padding: '12px 24px', fontSize: '14px' }}
-              onClick={handleTestSubmit}
-              disabled={Object.keys(testAnswers).length < (lessonPackage.checkpointTest?.length || 1)}
-            >
-              Submit Checkpoint Test
-            </button>
+            <>
+              <button
+                type="button"
+                className={`${styles.offlineBtn} ${styles.submitBtn}`}
+                onClick={handleTestSubmit}
+                disabled={lessonPackage.checkpointTest?.some((q: any) => !testAnswers[q.questionId]?.trim())}
+              >
+                Submit Checkpoint Test
+              </button>
+              {attemptErrors.checkpoint && (
+                <div className={styles.feedbackWarning} role="alert">
+                  {attemptErrors.checkpoint} Your answers are still selected; submit again to retry.
+                </div>
+              )}
+            </>
           ) : !checkpointResult ? (
-            <div style={{ padding: '24px', borderRadius: '8px', background: '#FAFAF8', border: '1px solid #D9DEEA' }}>
-              <h3 style={{ fontSize: '18px', fontWeight: 700, color: '#15233B', marginBottom: '8px' }}>
-                Checking your answers…
-              </h3>
-              <p style={{ fontSize: '14px', color: '#4A5873', lineHeight: 1.6 }}>
+            <div className={styles.resultBox}>
+              <h3 className={styles.resultTitle}>Checking your answers…</h3>
+              <p className={styles.resultText}>
                 Each answer is being graded by SETU. This usually takes a moment.
               </p>
             </div>
-          ) : (
-            <div style={{ padding: '24px', borderRadius: '8px', background: '#E8F5F0', border: '1px solid #A3D9C4' }}>
-              <h3 style={{ fontSize: '18px', fontWeight: 700, color: '#23795B', marginBottom: '8px' }}>
-                {checkpointResult.offline
-                  ? 'Checkpoint saved offline'
-                  : `Checkpoint: ${checkpointResult.correct} of ${checkpointResult.total} correct`}
-              </h3>
-              {checkpointResult.offline ? (
-                <p style={{ fontSize: '14px', color: '#15233B', lineHeight: 1.6 }}>
-                  The answers are stored on this device. Results appear after they sync.
-                </p>
-              ) : (
-                <>
-                  <p style={{ fontSize: '14px', color: '#15233B', lineHeight: 1.6 }}>
-                    Mastery: {checkpointResult.mastery?.band || 'not enough evidence'}
-                    {checkpointResult.mastery ? ` — ${checkpointResult.mastery.explanation}` : ''}
-                  </p>
-                  {checkpointResult.nextAction && (
-                    <p style={{ fontSize: '14px', color: '#15233B', lineHeight: 1.6 }}>
-                      {checkpointResult.nextAction.title}: {checkpointResult.nextAction.reason}
-                    </p>
-                  )}
-                  <div style={{ marginTop: '16px' }}>
-                    <button className={styles.offlineBtn} onClick={() => navigate('/')}>
-                      Back to Desk
-                    </button>
-                  </div>
-                </>
-              )}
+          ) : checkpointResult.offline ? (
+            <div className={`${styles.resultBox} ${styles.resultWarning}`}>
+              <h3 className={styles.resultTitle}>Checkpoint saved offline</h3>
+              <p className={styles.resultText}>
+                The answers are stored on this device. Results appear after they sync.
+              </p>
             </div>
-          )}
-          {attemptErrors.checkpoint && (
-            <div className={styles.feedbackWarning}>{attemptErrors.checkpoint}</div>
+          ) : (
+            <div className={`${styles.resultBox} ${styles.resultSuccess}`}>
+              <h3 className={styles.resultTitle}>
+                Checkpoint: {checkpointResult.correct} of {checkpointResult.total} correct
+              </h3>
+              <p className={styles.resultText}>
+                Mastery: {checkpointResult.mastery?.band.replace(/_/g, ' ') || 'not enough evidence'}
+                {checkpointResult.mastery ? ` — ${checkpointResult.mastery.explanation}` : ''}
+              </p>
+              {checkpointResult.nextAction && (
+                <p className={styles.resultText}>
+                  {checkpointResult.nextAction.title}: {checkpointResult.nextAction.reason}
+                </p>
+              )}
+              <div className={styles.nextRow}>
+                <button type="button" className={styles.offlineBtn} onClick={() => navigate('/')}>
+                  Back to Desk
+                </button>
+              </div>
+            </div>
           )}
         </div>
       )}
@@ -786,31 +944,56 @@ export const LessonReaderPage: React.FC = () => {
       {/* PROVENANCE MODAL / DRAWER */}
       {activeCitation && (
         <div className={styles.drawerOverlay} onClick={() => setActiveCitation(null)}>
-          <div className={styles.drawer} onClick={e => e.stopPropagation()}>
+          <div
+            className={styles.drawer}
+            ref={citationDrawerRef}
+            tabIndex={-1}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="provenance-title"
+            onClick={e => e.stopPropagation()}
+          >
             <div className={styles.drawerHeader}>
-              <h3 className={styles.drawerTitle}>Source Provenance</h3>
-              <button className={styles.closeBtn} onClick={() => setActiveCitation(null)}>
+              <h3 id="provenance-title" className={styles.drawerTitle}>Source provenance</h3>
+              <button
+                type="button"
+                className={styles.closeBtn}
+                onClick={() => setActiveCitation(null)}
+                aria-label="Close source provenance"
+                autoFocus
+              >
                 <X size={18} />
               </button>
             </div>
-            <div>
-              <div style={{ fontSize: '12px', fontWeight: 700, color: '#4055D9', textTransform: 'uppercase' }}>
-                Source citation
-              </div>
-              <h4 style={{ fontSize: '16px', fontWeight: 700, marginTop: '4px', color: '#15233B' }}>
-                {activeCitation.sourceTitle || 'Uploaded source'}
+            <div className={styles.drawerBody}>
+              <span className={styles.drawerKicker}>Source citation</span>
+              <h4 className={styles.sourceName}>
+                {activeCitation.sourceTitle || 'Source title not recorded'}
               </h4>
-              <div style={{ fontSize: '13px', color: '#7E8B9F', marginTop: '2px' }}>
+              <div className={styles.sourcePage}>
                 Page {activeCitation.pageStart}
+                {activeCitation.pageEnd && activeCitation.pageEnd !== activeCitation.pageStart
+                  ? `–${activeCitation.pageEnd}`
+                  : ''}
               </div>
+              {Array.isArray(activeCitation.headingPath) && activeCitation.headingPath.length > 0 && (
+                <div className={styles.sourcePage}>{activeCitation.headingPath.join(' › ')}</div>
+              )}
             </div>
 
-            <div style={{ padding: '16px', background: '#FAFAF8', borderRadius: '8px', border: '1px solid #D9DEEA', fontSize: '14px', lineHeight: 1.6, color: '#15233B' }}>
-              {activeCitation.excerpt || activeCitation.text || 'Excerpt from the document you uploaded.'}
+            <div className={styles.excerptBox}>
+              {activeCitation.excerpt || activeCitation.text ? (
+                activeCitation.excerpt || activeCitation.text
+              ) : (
+                <span className={styles.excerptMissing}>
+                  No excerpt was stored with this reference. It points to the page above in the
+                  source you uploaded.
+                </span>
+              )}
             </div>
 
-            <div style={{ fontSize: '12px', color: '#4A5873' }}>
-              ✓ Extracted from the document you uploaded.
+            <div className={styles.provenanceNote}>
+              Extracted from the document you uploaded.
             </div>
           </div>
         </div>
@@ -819,19 +1002,36 @@ export const LessonReaderPage: React.FC = () => {
       {/* DOUBT DRAWER */}
       {doubtDrawerOpen && (
         <div className={styles.drawerOverlay} onClick={() => setDoubtDrawerOpen(false)}>
-          <div className={styles.drawer} onClick={e => e.stopPropagation()}>
+          <div
+            className={styles.drawer}
+            ref={doubtDrawerRef}
+            tabIndex={-1}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="doubt-title"
+            onClick={e => e.stopPropagation()}
+          >
             <div className={styles.drawerHeader}>
-              <h3 className={styles.drawerTitle}>Ask Academic Doubt</h3>
-              <button className={styles.closeBtn} onClick={() => setDoubtDrawerOpen(false)}>
+              <h3 id="doubt-title" className={styles.drawerTitle}>Ask a doubt</h3>
+              <button
+                type="button"
+                className={styles.closeBtn}
+                onClick={() => setDoubtDrawerOpen(false)}
+                aria-label="Close doubt panel"
+                autoFocus
+              >
                 <X size={18} />
               </button>
             </div>
 
-            <p style={{ fontSize: '13px', color: '#4A5873' }}>
-              Ask any question about this lesson. Your answer is grounded in the document you uploaded{doubtPage ? ` (Page ${doubtPage})` : ''}.
+            <p className={styles.drawerLede}>
+              Ask any question about this lesson. Your answer is grounded in the document you
+              uploaded{doubtPage ? ` (page ${doubtPage})` : ''}.
             </p>
 
+            <label className={styles.inputLabel} htmlFor="doubt-question">Your question</label>
             <textarea
+              id="doubt-question"
               className={styles.doubtInput}
               placeholder="e.g., Ask any question or clarification about this concept..."
               value={doubtText}
@@ -839,41 +1039,43 @@ export const LessonReaderPage: React.FC = () => {
             />
 
             <button
-              className={styles.offlineBtn}
-              style={{ background: '#4055D9', color: '#FFFFFF', justifyContent: 'center' }}
+              type="button"
+              className={`${styles.offlineBtn} ${styles.submitBtn} ${styles.fullWidth}`}
               onClick={handleAskDoubt}
               disabled={submittingDoubt || !doubtText.trim()}
             >
-              {submittingDoubt ? 'Resolving Citations...' : 'Submit Doubt'}
+              {submittingDoubt ? 'Resolving citations…' : 'Submit Doubt'}
             </button>
 
             {doubtResponse && (
-              <div style={{
-                padding: '16px',
-                borderRadius: '8px',
-                background: doubtResponse.status === 'answered' ? '#E8F5F0' : '#FDF5EB',
-                border: `1px solid ${doubtResponse.status === 'answered' ? '#A3D9C4' : '#F1CE9C'}`
-              }}>
-                <div style={{ fontWeight: 700, fontSize: '14px', color: doubtResponse.status === 'answered' ? '#23795B' : '#A65B12', marginBottom: '6px' }}>
+              <div
+                className={`${styles.doubtResponse} ${
+                  doubtResponse.status === 'answered' ? styles.doubtAnswered : styles.doubtWarning
+                }`}
+              >
+                <div
+                  className={
+                    doubtResponse.status === 'answered' ? styles.doubtTitleAnswered : styles.doubtTitleWarning
+                  }
+                >
                   {doubtResponse.status === 'answered'
                     ? 'Answer from your sources'
                     : doubtResponse.status === 'queued'
                       ? 'Stored in Offline Queue'
                       : 'Could not answer yet'}
                 </div>
-                <div style={{ fontSize: '13px', lineHeight: 1.6, color: '#15233B' }}>
+                <div className={styles.doubtAnswer}>
                   {doubtResponse.answer || doubtResponse.message}
                 </div>
                 {doubtResponse.limitations === 'insufficient_source_evidence' && (
-                  <div style={{ marginTop: '6px', fontSize: '12px', color: '#A65B12' }}>
+                  <div className={styles.limitationNote}>
                     The uploaded source does not contain enough evidence for a grounded answer.
                   </div>
                 )}
                 {doubtResponse.retryable && (
                   <button
                     type="button"
-                    className={styles.offlineBtn}
-                    style={{ marginTop: '10px' }}
+                    className={styles.retryBtn}
                     onClick={() => lastDoubtPayload && void submitDoubt(lastDoubtPayload)}
                     disabled={submittingDoubt}
                   >
@@ -882,10 +1084,12 @@ export const LessonReaderPage: React.FC = () => {
                 )}
 
                 {doubtResponse.citations?.length > 0 && (
-                  <div style={{ marginTop: '10px', paddingTop: '8px', borderTop: '1px solid #A3D9C4', fontSize: '12px', color: '#23795B' }}>
+                  <div className={styles.citationFootnote}>
                     <strong>Citations: </strong>
                     {doubtResponse.citations.map((c: any, i: number) => (
-                      <span key={i} style={{ marginRight: '8px' }}>Page {c.pageNumber || c.pageStart}</span>
+                      <span key={i} className={styles.citationRef}>
+                        Page {c.pageNumber || c.pageStart}
+                      </span>
                     ))}
                   </div>
                 )}
@@ -894,6 +1098,13 @@ export const LessonReaderPage: React.FC = () => {
           </div>
         </div>
       )}
+      <Celebration
+        show={Boolean(celebration)}
+        title={celebration?.title || ''}
+        subtitle={celebration?.subtitle}
+        onDone={() => setCelebration(null)}
+      />
+      <CoachPopup card={coachCard} onClose={() => setCoachCard(null)} />
     </div>
   );
 };

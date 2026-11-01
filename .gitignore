@@ -24,6 +24,14 @@
 **/.vite/
 **/coverage/
 
+# Test artifacts
+**/test-results/
+**/playwright-report/
+acceptance/*.pdf
+
+# Generated exports (diagram tool output)
+diagrams/
+
 # OS & IDE
 .DS_Store
 Thumbs.db

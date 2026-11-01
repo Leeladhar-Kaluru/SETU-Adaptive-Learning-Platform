@@ -1,6 +1,7 @@
-import React, { useState } from 'react';
+import React, { useRef, useState } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { useTaxonomy } from '../hooks/useTaxonomy';
+import { useDialogFocus } from '../hooks/useDialogFocus';
 import { GRADES, gradeLabel } from '../lib/academic';
 import styles from './AuthModal.module.css';
 
@@ -23,6 +24,8 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose }) => {
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const taxonomy = useTaxonomy(isOpen && tab === 'signup' && role === 'student');
+  const modalRef = useRef<HTMLDivElement>(null);
+  useDialogFocus(modalRef, isOpen, onClose);
 
   if (!isOpen) return null;
 
@@ -81,12 +84,12 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose }) => {
 
   return (
     <div className={styles.backdrop} role="dialog" aria-modal="true" aria-labelledby="auth-modal-title">
-      <div className={styles.modal}>
+      <div className={styles.modal} ref={modalRef} tabIndex={-1}>
         <div className={styles.header}>
           <h2 id="auth-modal-title" className={styles.title}>
             {tab === 'login' ? 'Sign in to SETU' : 'Create SETU Account'}
           </h2>
-          <button className={styles.closeButton} onClick={onClose} aria-label="Close dialog">
+          <button type="button" className={styles.closeButton} onClick={onClose} aria-label="Close dialog">
             ×
           </button>
         </div>
@@ -139,7 +142,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose }) => {
                     value={role}
                     onChange={e => setRole(e.target.value as any)}
                   >
-                    <option value="student">Student (Classes 6–10)</option>
+                    <option value="student">Student</option>
                     <option value="teacher">Teacher / Educator</option>
                   </select>
                 </div>

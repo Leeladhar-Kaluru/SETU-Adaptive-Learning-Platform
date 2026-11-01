@@ -27,7 +27,7 @@ export const AuthGate: React.FC<AuthGateProps> = ({ children, teacherOnly = fals
     );
   }
 
-  if (teacherOnly && user.role !== 'teacher') {
+  if (teacherOnly && user.role !== 'teacher' && !user.canTeach) {
     return (
       <section className={styles.page}>
         <h1>Teacher account required</h1>

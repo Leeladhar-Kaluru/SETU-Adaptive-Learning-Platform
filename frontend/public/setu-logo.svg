@@ -1,6 +1,17 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="100" height="100">
-  <rect width="100" height="100" rx="20" fill="#15233B"/>
-  <path d="M 30 70 C 30 40, 70 40, 70 30" stroke="#FFFFFF" stroke-width="8" stroke-linecap="round" fill="none"/>
-  <circle cx="70" cy="30" r="6" fill="#4055D9"/>
-  <circle cx="30" cy="70" r="6" fill="#23795B"/>
+  <defs>
+    <linearGradient id="setuTile" x1="8" y1="4" x2="92" y2="96" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#4B3FD6"/>
+      <stop offset="0.55" stop-color="#7C4DF0"/>
+      <stop offset="1" stop-color="#C04CF0"/>
+    </linearGradient>
+    <linearGradient id="setuSun" x1="58" y1="20" x2="82" y2="44" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#FFE29A"/>
+      <stop offset="1" stop-color="#FF9A62"/>
+    </linearGradient>
+  </defs>
+  <rect width="100" height="100" rx="24" fill="url(#setuTile)"/>
+  <path d="M 27 72 C 27 43, 73 43, 73 28" stroke="#FFFFFF" stroke-width="9" stroke-linecap="round" fill="none"/>
+  <circle cx="73" cy="28" r="8" fill="url(#setuSun)"/>
+  <circle cx="27" cy="72" r="8" fill="#B9F6D9"/>
 </svg>

@@ -52,6 +52,7 @@ export interface OfflineDoubt {
     answer: string;
     citations: Array<{ citationId: string; pageNumber: number; snippet: string }>;
     answeredAt: string;
+    limitations?: string | null;
   };
 }
 

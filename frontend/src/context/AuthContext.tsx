@@ -1,5 +1,5 @@
-import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
-import { api, UserProfileData } from '../services/api';
+import React, { createContext, useCallback, useContext, useEffect, useRef, useState, ReactNode } from 'react';
+import { ApiError, api, UserProfileData } from '../services/api';
 import { clearOfflineData } from '../db/indexedDB';
 import { clearActiveUserId, getActiveUserId, setActiveUserId } from '../services/session';
 
@@ -7,6 +7,7 @@ interface AuthContextType {
   user: UserProfileData | null;
   token: string | null;
   isLoading: boolean;
+  sessionError: string | null;
   isTourOpen: boolean;
   login: (email: string, password: string) => Promise<void>;
   signup: (params: {
@@ -19,6 +20,7 @@ interface AuthContextType {
     preferredLanguage?: string;
   }) => Promise<UserProfileData>;
   logout: () => Promise<void>;
+  retrySession: () => Promise<void>;
   updateProfile: (updates: Partial<UserProfileData>) => Promise<void>;
   openTour: () => void;
   closeTour: () => void;
@@ -30,38 +32,75 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   const [user, setUser] = useState<UserProfileData | null>(null);
   const [token, setToken] = useState<string | null>(() => localStorage.getItem('setu_auth_token'));
   const [isLoading, setIsLoading] = useState<boolean>(true);
+  const [sessionError, setSessionError] = useState<string | null>(null);
   const [isTourOpen, setIsTourOpen] = useState<boolean>(false);
+  const loadInFlight = useRef<Promise<void> | null>(null);
 
-  useEffect(() => {
-    async function loadUser() {
+  const loadUser = useCallback(async () => {
+    if (loadInFlight.current) return loadInFlight.current;
+
+    const run = (async () => {
       const storedToken = localStorage.getItem('setu_auth_token');
       if (!storedToken) {
+        setToken(null);
+        setUser(null);
+        setSessionError(null);
         setIsLoading(false);
         return;
       }
-      try {
-        const profile = await api.getProfile();
-        const active = getActiveUserId();
-        if (active && active !== profile.id) {
-          await clearOfflineData();
-        }
-        setActiveUserId(profile.id);
-        setUser(profile);
-        if (!profile.tourCompleted && !profile.onboardingCompleted) {
-          setIsTourOpen(true);
-        }
-      } catch (err) {
-        console.warn('Session expired or profile failed to load:', err);
-        localStorage.removeItem('setu_auth_token');
-        setToken(null);
-        setUser(null);
-      } finally {
-        setIsLoading(false);
-      }
-    }
 
-    loadUser();
+      setToken(storedToken);
+      setIsLoading(true);
+      setSessionError(null);
+
+      for (let attempt = 0; attempt < 3; attempt += 1) {
+        try {
+          const profile = await api.getProfile();
+          const active = getActiveUserId();
+          if (active && active !== profile.id) {
+            await clearOfflineData();
+          }
+          setActiveUserId(profile.id);
+          setUser(profile);
+          setSessionError(null);
+          if (!profile.tourCompleted && !profile.onboardingCompleted) {
+            setIsTourOpen(true);
+          }
+          setIsLoading(false);
+          return;
+        } catch (err) {
+          const rejected = err instanceof ApiError && (err.status === 401 || err.status === 403);
+          if (rejected) {
+            localStorage.removeItem('setu_auth_token');
+            setToken(null);
+            setUser(null);
+            setSessionError(null);
+            setIsLoading(false);
+            return;
+          }
+          if (attempt < 2) {
+            await new Promise((resolve) => window.setTimeout(resolve, 400 * (attempt + 1)));
+          }
+        }
+      }
+
+      console.warn('SETU could not refresh the saved session after retries.');
+      setUser(null);
+      setSessionError('SETU could not reach your desk. Your session is still saved.');
+      setIsLoading(false);
+    })();
+
+    loadInFlight.current = run;
+    try {
+      await run;
+    } finally {
+      loadInFlight.current = null;
+    }
   }, []);
+
+  useEffect(() => {
+    void loadUser();
+  }, [loadUser]);
 
   const applySession = async (accessToken: string, profile: UserProfileData) => {
     const previous = getActiveUserId();
@@ -72,6 +111,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     setActiveUserId(profile.id);
     setToken(accessToken);
     setUser(profile);
+    setSessionError(null);
   };
 
   const login = async (email: string, password: string) => {
@@ -103,6 +143,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     clearActiveUserId();
     setToken(null);
     setUser(null);
+    setSessionError(null);
   };
 
   const updateProfile = async (updates: Partial<UserProfileData>) => {
@@ -119,10 +160,12 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         user,
         token,
         isLoading,
+        sessionError,
         isTourOpen,
         login,
         signup,
         logout,
+        retrySession: loadUser,
         updateProfile,
         openTour,
         closeTour

@@ -5,6 +5,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
 from fastapi.responses import FileResponse
 import os
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
@@ -17,6 +18,8 @@ from app.services.lesson_generator import lesson_generator_service
 router = APIRouter()
 
 READY_FOR_REVIEW = {"awaiting_review", "ready"}
+IN_PROGRESS = {"uploading", "stored", "extracting", "indexing", "extracted"}
+TERMINAL_FAILURE = {"failed", "needs_ocr"}
 
 
 def validate_file_signature(ext: str, content: bytes) -> None:
@@ -37,7 +40,19 @@ def validate_file_signature(ext: str, content: bytes) -> None:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="This text file looks binary.")
 
 
-def _document_payload(doc: Document, chunk_count: int = 0) -> dict:
+def _document_payload(doc: Document, chunk_count: int = 0, *, deduplicated: bool = False) -> dict:
+    # `safe_error_message` doubles as the worker's progress note. Never expose
+    # progress text as an error, and never expose an error as progress.
+    if doc.status in TERMINAL_FAILURE:
+        error_message = doc.safe_error_message
+        progress_message = None
+    elif doc.status in IN_PROGRESS:
+        error_message = None
+        progress_message = doc.safe_error_message
+    else:
+        error_message = None
+        progress_message = None
+
     return {
         "id": str(doc.id),
         "documentId": str(doc.id),
@@ -51,7 +66,9 @@ def _document_payload(doc: Document, chunk_count: int = 0) -> dict:
         "status": doc.status,
         "grade": doc.grade,
         "subjectId": doc.subject_id,
-        "errorMessage": doc.safe_error_message,
+        "errorMessage": error_message,
+        "progressMessage": progress_message,
+        "deduplicated": deduplicated,
         "createdAt": doc.created_at.isoformat() if doc.created_at else None,
     }
 
@@ -88,7 +105,8 @@ async def upload_document(
     db: Session = Depends(get_db),
 ):
     """Store the original file and return. Extraction runs on the background worker."""
-    filename = file.filename or "uploaded_document.bin"
+    raw_name = (file.filename or "").replace("\\", "/")
+    filename = os.path.basename(raw_name).strip() or "uploaded_document.bin"
     ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
     if ext not in settings.ALLOWED_EXTENSIONS:
         raise HTTPException(
@@ -118,7 +136,19 @@ async def upload_document(
     )
     if existing:
         chunks_count = db.query(DocumentChunk).filter(DocumentChunk.document_id == existing.id).count()
-        return _document_payload(existing, chunks_count)
+        if existing.status in TERMINAL_FAILURE:
+            # Re-uploading the same bytes is an explicit retry request. Returning
+            # the stale failed row would make the upload appear to do nothing.
+            existing.status = "stored"
+            existing.safe_error_message = None
+            existing.error_code = None
+            existing.lease_owner = None
+            existing.lease_expires_at = None
+            existing.attempt_count = 0
+            db.commit()
+            db.refresh(existing)
+            return _document_payload(existing, chunks_count)
+        return _document_payload(existing, chunks_count, deduplicated=True)
 
     storage_key = f"documents/{owner_id}/{uuid.uuid4()}/{filename}"
     doc = Document(
@@ -190,11 +220,19 @@ def get_document_status(
             "wordCount": page.word_count,
             "quality": page.extraction_quality,
             "needsOcr": page.is_scanned_ocr_needed,
+            "ocrApplied": bool((page.parser_metadata or {}).get("ocr_applied")),
             "preview": (page.extracted_text or "")[:120],
         }
         for page in pages
     ]
-    payload["chapters"] = _chapters_for(doc, pages) if doc.status in READY_FOR_REVIEW else []
+    chapters = _chapters_for(doc, pages) if doc.status in READY_FOR_REVIEW else []
+    payload["chapters"] = chapters
+    payload["canBuildPath"] = bool(chapters)
+    if doc.status in READY_FOR_REVIEW and not chapters:
+        payload["outlineMessage"] = (
+            "SETU could not detect chapter headings in this document. "
+            "Learning paths are built from the document's headings, so this file cannot become a plan yet."
+        )
     return payload
 
 
@@ -231,7 +269,15 @@ def list_user_documents(
         .order_by(Document.created_at.desc())
         .all()
     )
-    return [_document_payload(doc) for doc in docs]
+    if not docs:
+        return []
+    chunk_counts = dict(
+        db.query(DocumentChunk.document_id, func.count(DocumentChunk.id))
+        .filter(DocumentChunk.document_id.in_([doc.id for doc in docs]))
+        .group_by(DocumentChunk.document_id)
+        .all()
+    )
+    return [_document_payload(doc, chunk_counts.get(doc.id, 0)) for doc in docs]
 
 
 @router.delete("/{document_id}")

@@ -1,0 +1,3 @@
+# Resource source catalogue notes
+
+`catalogue/resource-source-catalog.json` is an admin discovery seed, not a complete textbook dump. Do not seed it as confirmed learner coverage without verifying each item and rights. `verification_status` separates portal discovery from a usable individual resource. Values like `verify_per_item` are intentionally not booleans. Production resource records require an exact title/edition/grade/subject/language, link, format, rights, licence, permitted action, verification date and status. If a direct URL changes, mark `needs_reverification`; do not guess a new URL.

@@ -46,6 +46,9 @@ def test_wrong_answer_cannot_be_forced_correct(client, db):
     assert response.status_code == 200
     assert response.json()["isCorrect"] is False
     assert response.json()["score"] == 0.0
+    feedback = response.json()["feedback"]
+    assert "correct!" not in feedback.casefold()
+    assert "A" in feedback
 
 
 def test_correct_answer_records_evidence_and_exact_time(client, db):

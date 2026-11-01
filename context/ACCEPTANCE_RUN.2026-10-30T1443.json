@@ -1,0 +1,245 @@
+{
+  "ownerId": "8b3318d8-0205-430b-8868-eca4fa8fbca4",
+  "startedAt": "2026-10-30T09:13:23Z",
+  "steps": {
+    "digitalUpload": {
+      "documentId": "be5af651-6f19-4e17-98ab-53ce0161d06e",
+      "uploadStatus": "stored",
+      "finalStatus": "awaiting_review",
+      "pageCount": 6,
+      "chunkCount": 6,
+      "pagesNeedingOcr": 0,
+      "canBuildPath": true,
+      "chapters": [
+        {
+          "title": "Chapter 1: The Fundamental Unit of Life",
+          "pageStart": 1,
+          "pageEnd": 1
+        },
+        {
+          "title": "Chapter 2: Tissues",
+          "pageStart": 2,
+          "pageEnd": 2
+        },
+        {
+          "title": "Chapter 3: Diversity in Living Organisms",
+          "pageStart": 3,
+          "pageEnd": 3
+        },
+        {
+          "title": "Chapter 4: Motion",
+          "pageStart": 4,
+          "pageEnd": 4
+        },
+        {
+          "title": "Chapter 5: Force and Laws of Motion",
+          "pageStart": 5,
+          "pageEnd": 5
+        },
+        {
+          "title": "Chapter 6: Gravitation",
+          "pageStart": 6,
+          "pageEnd": 6
+        }
+      ],
+      "transitions": [
+        {
+          "status": "extracting",
+          "atSeconds": 0.18,
+          "progressMessage": null,
+          "errorMessage": null
+        },
+        {
+          "status": "awaiting_review",
+          "atSeconds": 1.85,
+          "progressMessage": null,
+          "errorMessage": null
+        }
+      ],
+      "elapsedSeconds": 1.85
+    },
+    "documentList": {
+      "statusCode": 200,
+      "chunkCount": 6,
+      "pageCount": 6,
+      "errorMessage": null,
+      "progressMessage": null
+    },
+    "pathCreation": {
+      "statusCode": 200,
+      "pathId": "a3b8eff5-0c8f-41ba-8844-34e482182186",
+      "firstLessonId": "010cccc3-6102-4f62-bed5-53d84d7b0d17",
+      "totalLessons": 6,
+      "status": "generating"
+    },
+    "lessonGeneration": {
+      "firstLessonId": "010cccc3-6102-4f62-bed5-53d84d7b0d17",
+      "firstLessonStatus": "ready",
+      "elapsedSeconds": 305.53,
+      "allLessonStatuses": [
+        "ready",
+        "ready",
+        "ready",
+        "ready",
+        "ready",
+        "ready"
+      ],
+      "allSettled": true
+    },
+    "lessonPackage": {
+      "statusCode": 200,
+      "lessonVersionId": "f0a0d484-6b98-40d3-9d70-76c309380271",
+      "pathId": "a3b8eff5-0c8f-41ba-8844-34e482182186",
+      "sections": [
+        "schemaVersion",
+        "lessonId",
+        "lessonVersion",
+        "pathId",
+        "pathVersion",
+        "title",
+        "grade",
+        "subjectId",
+        "languageTag",
+        "sourceRefs",
+        "objectives",
+        "blocks",
+        "workedExamples",
+        "practice",
+        "checkpointTest",
+        "takeaways",
+        "validation",
+        "visuals",
+        "lessonVersionId"
+      ],
+      "practiceCount": 2,
+      "checkpointCount": 2,
+      "answerKeysRedacted": true,
+      "sourceRefs": [
+        {
+          "sourceTitle": "e2e_science.pdf",
+          "pageStart": 1,
+          "pageEnd": 1,
+          "headingPath": [
+            "Chapter 1: The Fundamental Unit of Life"
+          ]
+        }
+      ],
+      "visualCount": 1,
+      "visualsHaveAltText": true,
+      "visualSpecsValid": true,
+      "firstQuestion": {
+        "questionId": "q_1",
+        "type": "multiple_choice",
+        "hasOptions": true
+      }
+    },
+    "attempt": {
+      "statusCode": 200,
+      "body": {
+        "attemptId": "23b382c9-8223-47a7-ad8a-3a6b3c1ea330",
+        "isCorrect": false,
+        "score": 0.0,
+        "correctAnswer": "Osmosis",
+        "feedback": "Not quite. The correct answer is: Osmosis.",
+        "mastery": {
+          "band": "not_enough_evidence",
+          "score": 0.0,
+          "evidenceCount": 1,
+          "explanation": "Only 1 observation recorded. Minimum 2 observations required to assess mastery."
+        },
+        "nextAction": {
+          "action": "practice_more",
+          "title": "Complete Practice Problems",
+          "reason": "Complete guided solve practice to build observable evidence for this concept.",
+          "targetConceptId": null,
+          "canAdvance": true
+        },
+        "alreadyRecorded": false
+      },
+      "feedbackContradictsGrade": false
+    },
+    "doubt": {
+      "statusCode": 200,
+      "status": "answered",
+      "answer": "Osmosis is the movement of water across a selectively permeable membrane.\n\nThe cell membrane is called selectively permeable because it separates the contents of the cell from its external environment, while also permitting the entry and exit of some materials.",
+      "citations": [
+        {
+          "citationId": "cite_6c47ef53",
+          "documentId": "be5af651-6f19-4e17-98ab-53ce0161d06e",
+          "sourceTitle": "e2e_science.pdf",
+          "pageStart": 1,
+          "pageEnd": 1,
+          "heading": [
+            "Chapter 1: The Fundamental Unit of Life"
+          ],
+          "excerpt": "Chapter 1: The Fundamental Unit of Life While examining a thin slice of cork, Robert Hooke saw that the cork resembled the structure of a honeycomb consisting of many little compar"
+        }
+      ],
+      "citationSourceTitles": [
+        "e2e_science.pdf"
+      ],
+      "limitations": null,
+      "attempts": [
+        {
+          "attempt": 1,
+          "statusCode": 200,
+          "status": "answered"
+        }
+      ],
+      "answerLength": 261,
+      "answerEndsWithTerminalPunctuation": true,
+      "containsCorruptBytes": false
+    },
+    "scannedUpload": {
+      "documentId": "ff5ff8f3-8006-4547-9e59-0b98c71a213c",
+      "finalStatus": "awaiting_review",
+      "pageCount": 1,
+      "chunkCount": 1,
+      "pagesNeedingOcr": 0,
+      "canBuildPath": true,
+      "chapters": [
+        {
+          "title": "Chapter 1: The Fundamental Unit of Life",
+          "pageStart": 1,
+          "pageEnd": 1
+        }
+      ],
+      "transitions": [
+        {
+          "status": "stored",
+          "atSeconds": 0.18,
+          "progressMessage": null,
+          "errorMessage": null
+        },
+        {
+          "status": "indexing",
+          "atSeconds": 1.86,
+          "progressMessage": "Processing page 1/1...",
+          "errorMessage": null
+        },
+        {
+          "status": "awaiting_review",
+          "atSeconds": 5.22,
+          "progressMessage": null,
+          "errorMessage": null
+        }
+      ],
+      "elapsedSeconds": 5.22,
+      "pages": [
+        {
+          "pageNumber": 1,
+          "charCount": 734,
+          "wordCount": 119,
+          "quality": "high",
+          "needsOcr": false,
+          "ocrApplied": true,
+          "preview": "Chapter 1: The Fundamental Unit of Life\nWhile examining a thin slice of cork, Robert Hooke saw that the cork resembled t"
+        }
+      ],
+      "ocrAppliedOnAnyPage": true,
+      "pagesWithReadableText": 1
+    }
+  },
+  "finishedAt": "2026-10-30T09:19:03Z",
+  "result": "completed"
+}

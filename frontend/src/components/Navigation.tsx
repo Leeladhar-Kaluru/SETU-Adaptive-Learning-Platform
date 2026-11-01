@@ -1,10 +1,27 @@
 import React, { useEffect, useState } from 'react';
 import { NavLink } from 'react-router-dom';
+import {
+  BookOpen,
+  Download,
+  GraduationCap,
+  Home,
+  LayoutDashboard,
+  MessageCircleQuestion,
+  Sparkles,
+} from 'lucide-react';
 import { syncManager } from '../services/syncManager';
 import { useAuth } from '../context/AuthContext';
 import { AuthModal } from './AuthModal';
 import { api } from '../services/api';
 import styles from './Navigation.module.css';
+
+const initialsFor = (name: string) =>
+  name
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((part) => part[0]?.toUpperCase())
+    .join('') || 'S';
 
 export const Navigation: React.FC = () => {
   const { user, logout, openTour } = useAuth();
@@ -62,25 +79,51 @@ export const Navigation: React.FC = () => {
   return (
     <>
       <aside className={styles.sidebar}>
-        <NavLink to={user?.role === 'teacher' ? '/teacher' : '/'} className={styles.brand}>
-          <span className={styles.brandLogo}>S</span>
-          <span className={styles.brandName}>SETU</span>
+        <NavLink to={user?.role === 'teacher' ? '/teacher' : '/'} className={styles.brand} title="SETU home">
+          <span className={styles.brandMark} aria-hidden="true">
+            <img src="/setu-logo.svg" alt="" width={34} height={34} />
+          </span>
+          <span className={styles.brandText}>
+            <span className={styles.brandName}>SETU</span>
+            <span className={styles.brandTag}>Learning desk</span>
+          </span>
         </NavLink>
 
         <nav className={styles.navLinks} aria-label="Primary">
+          <span className={styles.navLabel} aria-hidden="true">Your desk</span>
           {!user ? (
-            <NavLink to="/" end className={linkClass}>Home</NavLink>
+            <NavLink to="/" end className={linkClass}>
+              <Home size={16} aria-hidden="true" /> Home
+            </NavLink>
           ) : user.role === 'teacher' ? (
-            <NavLink to="/teacher" className={linkClass}>Classroom</NavLink>
+            <NavLink to="/teacher" className={linkClass}>
+              <GraduationCap size={16} aria-hidden="true" /> Classroom
+            </NavLink>
           ) : (
             <>
-              <NavLink to="/" end className={linkClass}>Home</NavLink>
-              <NavLink to="/dashboard" className={linkClass}>Dashboard</NavLink>
-              {lessonHref !== '/' && <NavLink to={lessonHref} className={linkClass}>Lesson</NavLink>}
-              <NavLink to="/doubts" className={linkClass}>
-                Doubts{pendingCount > 0 ? ` (${pendingCount})` : ''}
+              <NavLink to="/" end className={linkClass}>
+                <Home size={16} aria-hidden="true" /> Home
               </NavLink>
-              <NavLink to="/library" className={linkClass}>Downloads</NavLink>
+              <NavLink to="/dashboard" className={linkClass}>
+                <LayoutDashboard size={16} aria-hidden="true" /> Dashboard
+              </NavLink>
+              {lessonHref !== '/' && (
+                <NavLink to={lessonHref} className={linkClass}>
+                  <BookOpen size={16} aria-hidden="true" /> Lesson
+                </NavLink>
+              )}
+              {user.canTeach && (
+                <NavLink to="/teacher" className={linkClass}>
+                  <GraduationCap size={16} aria-hidden="true" /> Classroom
+                </NavLink>
+              )}
+              <NavLink to="/doubts" className={linkClass}>
+                <MessageCircleQuestion size={16} aria-hidden="true" /> Doubts
+                {pendingCount > 0 ? <span className={styles.countBadge}>{pendingCount}</span> : null}
+              </NavLink>
+              <NavLink to="/library" className={linkClass}>
+                <Download size={16} aria-hidden="true" /> Downloads
+              </NavLink>
             </>
           )}
         </nav>
@@ -99,17 +142,23 @@ export const Navigation: React.FC = () => {
           </div>
           {pendingCount > 0 && isOnline && (
             <button type="button" className={styles.syncButton} onClick={() => syncManager.syncPendingData()} disabled={isSyncing}>
-              {isSyncing ? 'Syncing' : 'Sync now'}
+              {isSyncing ? 'Syncing…' : 'Sync now'}
             </button>
           )}
           <button type="button" className={styles.tourTriggerButton} onClick={openTour}>
+            <Sparkles size={14} aria-hidden="true" />
             {user ? 'How SETU works' : 'Get started'}
           </button>
           {user ? (
             <div className={styles.userBlock}>
-              <span className={styles.userName}>{user.displayName}</span>
-              <span className={styles.userRoleBadge}>{user.role === 'teacher' ? 'Teacher' : 'Student'}</span>
-              <button type="button" className={styles.logoutBtn} onClick={() => void logout()}>Sign out</button>
+              <span className={styles.avatar} aria-hidden="true">{initialsFor(user.displayName)}</span>
+              <span className={styles.userCopy}>
+                <span className={styles.userName}>{user.displayName}</span>
+                <span className={styles.userRoleBadge}>{user.role === 'teacher' ? 'Teacher' : 'Student'}</span>
+              </span>
+              <button type="button" className={styles.logoutBtn} onClick={() => void logout()}>
+                Sign out
+              </button>
             </div>
           ) : (
             <button type="button" className={styles.loginBtn} onClick={() => setIsAuthModalOpen(true)}>

@@ -131,6 +131,15 @@ def test_recommendation_requires_evidence_and_is_respondable(client, db):
     assert "approaching" in summary["suggestions"][0]["explanation"]
     assert summary["suggestions"][0]["conceptId"] == "concept-cell"
 
+    # A teacher accepting their own note must not remove it from the student's desk.
+    assert client.patch(
+        f"/api/v1/teacher/actions/{payload['id']}",
+        headers=auth_headers(teacher_id),
+        json={"decision": "accept"},
+    ).json()["status"] == "accepted"
+    still_delivered = client.get("/api/v1/study/summary", headers=student_headers).json()
+    assert still_delivered["suggestions"][0]["status"] == "accepted"
+
     assert client.post(
         f"/api/v1/study/recommendations/{payload['id']}/respond",
         headers=auth_headers(outsider_id),

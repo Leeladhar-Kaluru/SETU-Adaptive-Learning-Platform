@@ -1,0 +1,161 @@
+{
+  "schemaVersion": "1.0.0",
+  "lessonId": "fixture-lesson-01",
+  "lessonVersion": 1,
+  "pathId": "fixture-path",
+  "pathVersion": 1,
+  "title": "Understanding a Source Passage",
+  "grade": 8,
+  "subjectId": "fixture-subject",
+  "languageTag": "en-IN",
+  "translationStatus": "original",
+  "estimatedMinutes": 12,
+  "sourceRefs": [],
+  "objectives": [
+    "Identify the key idea in a short passage.",
+    "Support an answer with evidence from the selected source."
+  ],
+  "prerequisites": [],
+  "blocks": [
+    {
+      "blockId": "intro",
+      "kind": "explanation",
+      "heading": "Read for the key idea",
+      "content": "Synthetic test fixture only: identify the main idea and point to the sentence that supports it.",
+      "sourceRefs": []
+    },
+    {
+      "blockId": "check",
+      "kind": "check",
+      "heading": "Check your understanding",
+      "content": "Can you state the main idea and identify supporting evidence?",
+      "sourceRefs": []
+    }
+  ],
+  "visuals": [
+    {
+      "visualId": "evidence-flow",
+      "type": "concept_map",
+      "altText": "A simple flow from passage to key idea to supporting evidence",
+      "spec": {
+        "schemaVersion": "1.0.0",
+        "visualId": "evidence-flow",
+        "type": "concept_map",
+        "altText": "A simple flow from passage to key idea to supporting evidence",
+        "data": {
+          "nodes": [
+            {
+              "id": "p",
+              "label": "Passage"
+            },
+            {
+              "id": "i",
+              "label": "Key idea"
+            },
+            {
+              "id": "e",
+              "label": "Evidence"
+            }
+          ],
+          "edges": [
+            [
+              "p",
+              "i"
+            ],
+            [
+              "p",
+              "e"
+            ]
+          ]
+        },
+        "interactions": [],
+        "fallbackText": "Read the passage, identify the key idea, then locate evidence."
+      }
+    }
+  ],
+  "workedExamples": [
+    {
+      "prompt": "A paragraph says a plant needs light, water and suitable soil to grow. What is its main idea?",
+      "steps": [
+        "Ask what the paragraph is mostly explaining.",
+        "Use the repeated focus on plant needs."
+      ],
+      "answer": "Plants need suitable conditions to grow.",
+      "sourceRefs": []
+    }
+  ],
+  "practice": [
+    {
+      "questionId": "fixture-q1",
+      "type": "short_text",
+      "prompt": "Name one condition a plant needs.",
+      "conceptIds": [
+        "source-evidence"
+      ],
+      "difficulty": "introductory",
+      "answerKey": "light, water, or suitable soil",
+      "rubric": {
+        "matching": "Accept any one of the three listed conditions."
+      },
+      "hints": [
+        "Look at the listed conditions."
+      ],
+      "feedback": "Compare your answer with the conditions listed in the paragraph.",
+      "sourceRefs": [],
+      "validator": "rubric"
+    }
+  ],
+  "checkpointTest": [
+    {
+      "questionId": "fixture-test1",
+      "type": "short_text",
+      "prompt": "State the main idea and give one supporting detail.",
+      "conceptIds": [
+        "source-evidence"
+      ],
+      "difficulty": "standard",
+      "answerKey": {
+        "mainIdea": "plants need suitable conditions",
+        "evidence": "light/water/soil"
+      },
+      "rubric": {
+        "criteria": [
+          "states main idea",
+          "includes supporting detail"
+        ]
+      },
+      "hints": [],
+      "feedback": "A strong answer includes both main idea and evidence.",
+      "sourceRefs": [],
+      "validator": "rubric"
+    }
+  ],
+  "misconceptions": [
+    {
+      "conceptId": "source-evidence",
+      "label": "Repeating one detail rather than the main idea",
+      "evidenceStatus": "candidate_hypothesis",
+      "feedback": "Try saying what the whole paragraph is mostly about."
+    }
+  ],
+  "takeaways": [
+    "The main idea tells what a passage is mostly about.",
+    "Supporting evidence points back to the source."
+  ],
+  "doubtAnchors": [
+    {
+      "anchorId": "intro",
+      "label": "Ask about the main idea"
+    }
+  ],
+  "validation": {
+    "status": "draft",
+    "checks": [
+      {
+        "name": "synthetic_fixture_only",
+        "passed": true,
+        "details": "Never display this fixture in an ordinary student production flow."
+      }
+    ]
+  }
+}

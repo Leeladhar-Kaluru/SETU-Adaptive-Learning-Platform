@@ -23,6 +23,9 @@ class Document(Base):
     subject_id = Column(String(50), nullable=True)
     status = Column(String(50), default="queued_for_extraction", index=True)
     page_count = Column(Integer, default=0)
+    lease_owner = Column(String(100), nullable=True)
+    lease_expires_at = Column(DateTime, nullable=True)
+    attempt_count = Column(Integer, nullable=False, default=0)
     error_code = Column(String(50), nullable=True)
     safe_error_message = Column(String(500), nullable=True)
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
@@ -58,3 +61,4 @@ class DocumentChunk(Base):
     embedding_dimension = Column(Integer, default=768)
     embedding = Column(Vector(768), nullable=True)
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
+

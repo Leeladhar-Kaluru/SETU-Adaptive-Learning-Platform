@@ -10,7 +10,7 @@ from app.services.sync_service import sync_service
 pytestmark = pytest.mark.integration
 
 
-@pytest.fixture(scope="module")
+@pytest.fixture
 def rag_eval_fixture():
     db = SessionLocal()
     owner_a = uuid.uuid4()
@@ -286,4 +286,4 @@ async def test_rag_grounded_answer_and_citation_contract(rag_eval_fixture):
     ood_answer = doubt_ood["answerJson"]
     assert ood_answer["citations"] == []
     assert ood_answer.get("limitations") == "insufficient_source_evidence"
-    assert "does not contain sufficient verified evidence" in ood_answer["answer"]
+    assert "does not contain enough evidence" in ood_answer["answer"]

@@ -4,10 +4,10 @@
 **Target Supabase Project:** https://mevbffduofdpalzimfye.supabase.co
 **Storage Bucket:** setu-documents
 
-> **Current state (2026-10-29):** Sections 1–5 are the historical full-reset record.
-> Section 6 is the pre-cleanup inventory. Section 7 is the final read-only
-> inventory after the approved scoped cleanup and Task 17 verification. No broad
-> reset and no emergency `--apply` reset was run.
+> **Current state (2026-10-30):** Sections 1–5 are the historical full-reset record.
+> Section 6 is the pre-cleanup inventory. Section 7 is the 2026-10-29 read-only
+> inventory. Section 8 records the approved scoped auth/storage cleanup and the
+> final inventory. No broad reset and no emergency `--apply` reset was run.
 
 ---
 
@@ -211,3 +211,115 @@ preserved.
   Task 17 inventory.
 - The timestamped reset-report mechanism is covered by
   `backend/tests/test_reset_guard.py`; no report is produced by a read-only run.
+
+---
+
+## 8. Scoped auth and storage cleanup (2026-10-30)
+
+**Authorization:** the user explicitly requested removal of legacy Supabase Auth
+users and stale application Storage objects, with backup and verification.
+**Mode:** scoped Admin API / Storage API operations. No broad database reset.
+**Emergency reset `--apply`:** NOT RUN.
+
+### 8.1 Backup and manifest
+
+| Artifact | Path | Size |
+|---|---|---:|
+| Public-schema SQL backup | `backend/backups/supabase_public_backup_20261030_091121.sql` | 16,014,307 bytes |
+| Backup metadata | `backend/backups/supabase_manifest_20261030_091121.json` | 6,984 bytes |
+| Archived orphan objects | `backend/backups/storage_orphans_20261030/` | 5 files + `manifest.json` |
+
+The manifest records redacted auth-user metadata and storage object names. It
+does not contain the database URL, password, service key, or full email
+addresses.
+
+### 8.2 Auth users
+
+- Before: **9** `auth.users`.
+- Deleted: **8** orphan `@example.com` accounts, scoped by ID:
+
+| User ID | Masked email |
+|---|---|
+| `f067c249-63c3-4aeb-adef-5b2dfa658f6b` | `st***@example.com` |
+| `6042717d-3b28-43e7-99d6-e0ece1ff4094` | `st***@example.com` |
+| `4a50ddf8-b62e-4ac7-8cf2-bd0449a1b4a6` | `st***@example.com` |
+| `1a8f1578-415c-4c87-80b1-77ad5001a043` | `st***@example.com` |
+| `b461a060-28ac-40f4-99d8-a33de0c1441b` | `st***@example.com` |
+| `7b645ef0-9b7a-4ec5-9f18-8f3828bbd14e` | `st***@example.com` |
+| `d33bcb7c-380a-4b6a-968a-277c5a1089cc` | `st***@example.com` |
+| `b6a37ff1-88b0-4cd0-9018-f346b24f065f` | `st***@example.com` |
+
+- Preserved: `5cee4e2f-bbdc-41f5-87c9-52cdc63e755b` (Gmail account).
+- After: **1** `auth.users`, **1** `user_profiles`. No public application row
+  referenced a deleted auth ID.
+
+An earlier cleanup log had incorrectly reported these users as deleted while
+their `deleted_at` was still null. The scoped Admin API deletes were re-run and
+the final count was verified directly as `auth.users = 1`.
+
+### 8.3 Storage objects
+
+- Before: **8** objects in `setu-documents`.
+- Archived and then deleted: **5** orphan objects. The archive manifest records
+  the original object name, byte size, SHA-256, and archived filename.
+
+| Original object | Bytes | SHA-256 |
+|---|---:|---|
+| `documents/382d0709-4c58-461f-9665-6441a5e5b31f/d72785fb-0f2f-483d-b601-9c8748f66f84/NCERT-Class-10-Science.pdf` | 16,240,856 | `fb04cf19f48fa2efa1e08854640826fffe47f6f6c7a4cbe983754a78dea2054f` |
+| `documents/68c5ae2c-e188-4d4e-93fb-dccdceb40349/1dd993f3-686e-4fac-9e67-ad57dcd8378a/NCERT-Class-10-Science.pdf` | 16,240,856 | `fb04cf19f48fa2efa1e08854640826fffe47f6f6c7a4cbe983754a78dea2054f` |
+| `documents/68c5ae2c-e188-4d4e-93fb-dccdceb40349/329894b9-3dc0-43d1-bc8f-60685fb0a2cc/TS-SCERT-Class-10-Social-Science-Textbook-in-English-Medium.pdf` | 19,533,190 | `dea05fe59c127df137db907bc249b2bdf09ee27eacdc3e6124bd2299f97e6ea5` |
+| `documents/68c5ae2c-e188-4d4e-93fb-dccdceb40349/d6ae3bf2-b107-419d-809a-6af22507f68d/TS-SCERT-Class-10-Social-Science-Textbook-in-English-Medium.pdf` | 19,533,190 | `dea05fe59c127df137db907bc249b2bdf09ee27eacdc3e6124bd2299f97e6ea5` |
+| `documents/de898934-3c24-4d3a-baf3-53387ac557b0/83006a95-467e-447a-8b99-0da9a5405af4/NCERT-Class-10-Science.pdf` | 16,240,856 | `fb04cf19f48fa2efa1e08854640826fffe47f6f6c7a4cbe983754a78dea2054f` |
+
+- After: **3** objects. All 3 match current `documents.storage_key` values;
+  `every_storage_object_referenced = true`.
+- Residual finding: two older documents reference storage keys that are not in
+  the bucket (`eval_cell.pdf`, `test/Class_9_Science_Chapter_5.pdf`). They were
+  already absent before this cleanup and were not deleted here.
+
+### 8.4 Final read-only inventory
+
+**Command:** `.\backend\.venv\Scripts\python.exe backend\scripts\reset_supabase_app_data.py`
+**Observed:** `Read-only inventory. No changes were made.`
+**Log:** `context/PRODUCTION_INVENTORY_2026-10-30.log`
+
+| Table | Rows |
+|---|---:|
+| `alembic_version` | 1 |
+| `user_profiles` | 1 |
+| `documents` | 13 |
+| `document_pages` | 628 |
+| `document_chunks` | 1086 |
+| `learning_paths` | 1 |
+| `path_lessons` | 24 |
+| `lesson_versions` | 17 |
+| `questions` | 0 |
+| `quiz_attempts` | 0 |
+| `concept_evidence` | 0 |
+| `concept_mastery_snapshots` | 0 |
+| `doubts` | 15 |
+| `sync_events` | 0 |
+| `classrooms` | 8 |
+| `classroom_memberships` | 8 |
+| `teacher_actions` | 0 |
+| `study_events` | 6 |
+| `generation_jobs` | 24 |
+| `resources` | 0 |
+| `resource_rights` | 0 |
+| `resource_sources` | 0 |
+| `curriculum_boards` | 6 |
+| `subjects` | 6 |
+| `languages` | 4 |
+| `storage.objects` (`setu-documents`) | 3 |
+| `auth.users` | 1 |
+
+### 8.5 Safety notes
+
+- The backup completed before any deletion; the archive manifest's SHA-256
+  values were recorded before the storage objects were removed.
+- Only the named auth IDs and storage object names were touched. The preserved
+  Gmail profile and all application content rows were left intact.
+- No secret, database URL, password, service key, or full email was printed.
+- The preserved Gmail profile still has role `student` and owns 8 classrooms.
+  No role was changed during this cleanup; production teacher endpoints remain
+  403 until that data decision is approved.

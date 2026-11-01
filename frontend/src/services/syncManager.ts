@@ -2,10 +2,15 @@ import { db } from '../db/indexedDB';
 import { authHeaders } from './api';
 import { getActiveUserId } from './session';
 
-export type SyncStatusListener = (isSyncing: boolean, pendingCount: number) => void;
+export type SyncStatusListener = (
+  isSyncing: boolean,
+  pendingCount: number,
+  lastError: string | null,
+) => void;
 
 class SyncManager {
   private isSyncing = false;
+  private lastSyncError: string | null = null;
   private listeners: Set<SyncStatusListener> = new Set();
 
   constructor() {
@@ -35,7 +40,7 @@ class SyncManager {
   private async notify() {
     const ownerId = getActiveUserId();
     if (!ownerId) {
-      for (const listener of this.listeners) listener(this.isSyncing, 0);
+      for (const listener of this.listeners) listener(this.isSyncing, 0, this.lastSyncError);
       return;
     }
     const pendingDoubts = await db.doubtOutbox
@@ -50,7 +55,7 @@ class SyncManager {
       .count();
     const totalPending = pendingDoubts + pendingAttempts;
     for (const listener of this.listeners) {
-      listener(this.isSyncing, totalPending);
+      listener(this.isSyncing, totalPending, this.lastSyncError);
     }
   }
 
@@ -65,6 +70,7 @@ class SyncManager {
 
     let syncedDoubts = 0;
     let syncedAttempts = 0;
+    let syncFailed = false;
     const headers = { 'Content-Type': 'application/json', ...authHeaders() };
 
     try {
@@ -75,6 +81,14 @@ class SyncManager {
         .and(doubt => !doubt.synced)
         .toArray();
       if (pendingDoubts.length > 0) {
+        const doubtIds = pendingDoubts.map(doubt => doubt.clientDoubtId);
+        await db.doubtOutbox.bulkUpdate(
+          doubtIds.map(id => ({
+            key: id,
+            changes: { status: 'syncing' as const, lastError: undefined },
+          })),
+        );
+        await this.notify();
         try {
           const res = await fetch('/api/v1/sync/doubts', {
             method: 'POST',
@@ -113,16 +127,8 @@ class SyncManager {
                     answer,
                     citations: result.answerJson?.citations || [],
                     answeredAt,
+                    limitations: result.answerJson?.limitations ?? null,
                   },
-                });
-                await db.cachedAnswers.put({
-                  clientDoubtId: matching.clientDoubtId,
-                  ownerId,
-                  doubtId: result.id,
-                  questionText: matching.questionText,
-                  answer,
-                  citations: result.answerJson?.citations || [],
-                  cachedAt: answeredAt,
                 });
                 syncedDoubts += 1;
               } else {
@@ -136,8 +142,22 @@ class SyncManager {
                 });
               }
             }
+          } else {
+            throw new Error(`Sync endpoint returned ${res.status}`);
           }
         } catch (err) {
+          syncFailed = true;
+          const message = 'The tutor could not be reached. Your question is saved and will retry.';
+          await db.doubtOutbox.bulkUpdate(
+            doubtIds.map(id => ({
+              key: id,
+              changes: {
+                synced: false,
+                status: 'queued' as const,
+                lastError: message,
+              },
+            })),
+          );
           console.warn('[SETU SyncManager] Doubt sync error:', err);
         }
       }
@@ -185,10 +205,17 @@ class SyncManager {
             });
           }
         } catch (err) {
+          syncFailed = true;
+          await db.offlineAttempts.update(attempt.clientAttemptId, {
+            syncError: 'Network error — will retry on the next sync.',
+          });
           console.warn('[SETU SyncManager] Attempt sync error:', err);
         }
       }
     } finally {
+      this.lastSyncError = syncFailed
+        ? 'Last sync failed — your offline work is safe and will retry.'
+        : null;
       this.isSyncing = false;
       await this.notify();
     }

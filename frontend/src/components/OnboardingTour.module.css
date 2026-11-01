@@ -1,8 +1,8 @@
 .backdrop {
   position: fixed;
   inset: 0;
-  background-color: rgba(21, 35, 59, 0.65);
-  backdrop-filter: blur(4px);
+  background-color: rgba(23, 35, 61, 0.42);
+  backdrop-filter: blur(8px);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -173,7 +173,7 @@
 
 .chipSelected {
   background-color: var(--brand-primary);
-  color: #ffffff;
+  color: var(--ink-inverted);
   border-color: var(--brand-primary);
 }
 
@@ -253,7 +253,7 @@
 .nextButton {
   font-size: 0.875rem;
   font-weight: 600;
-  color: #ffffff;
+  color: var(--ink-inverted);
   padding: 0.5rem 1.25rem;
   border-radius: var(--radius-sm);
   background-color: var(--brand-primary);

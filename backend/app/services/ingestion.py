@@ -102,7 +102,11 @@ async def process_claimed_document(db: Session, doc: Document) -> None:
         doc.page_count = len(pages)
         if not usable or (pages and len(scanned) == len(pages)):
             doc.status = "needs_ocr"
-            doc.safe_error_message = "This file has no extractable text. OCR is not available."
+            doc.safe_error_message = (
+                "No readable text was found after text extraction and OCR. Upload a clearer copy or retry."
+                if extraction_service.tessdata_path
+                else "No readable text was found, and OCR is not installed on this worker. Upload a text-based copy or install Tesseract data."
+            )
             doc.error_code = "needs_ocr"
             doc.lease_owner = None
             doc.lease_expires_at = None

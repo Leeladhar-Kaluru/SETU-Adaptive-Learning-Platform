@@ -13,6 +13,7 @@ class Classroom(Base):
     board_id = Column(String(50), nullable=True)
     grade = Column(Integer, nullable=False)
     subject_scope = Column(String(100), nullable=False)
+    join_code = Column(String(15), unique=True, index=True, nullable=True)
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
 
 class ClassroomMembership(Base):
@@ -41,3 +42,4 @@ class TeacherAction(Base):
     status = Column(String(50), default="proposed")  # proposed, accepted, edited, dismissed
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
     resolved_at = Column(DateTime, nullable=True)
+

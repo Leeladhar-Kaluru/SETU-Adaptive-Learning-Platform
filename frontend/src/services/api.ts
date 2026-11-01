@@ -13,6 +13,7 @@ export interface UserProfileData {
   subjectsInterested?: string[];
   learningGoals?: string[];
   dailyGoalMinutes?: number | null;
+  canTeach?: boolean;
   academicContextComplete?: boolean;
   accessibilityPreferences?: {
     font_size?: string;
@@ -80,7 +81,13 @@ export interface IngestionStatus {
   filename: string;
   pageCount?: number;
   chunkCount?: number;
+  pagesRead?: number;
+  pagesNeedingOcr?: number;
   errorMessage?: string;
+  progressMessage?: string;
+  deduplicated?: boolean;
+  canBuildPath?: boolean;
+  outlineMessage?: string;
   chapters?: Array<{ title: string; pageStart: number; pageEnd: number }>;
 }
 
@@ -91,14 +98,19 @@ export interface UserDocument {
   status: string;
   pageCount?: number;
   chunkCount?: number;
+  pagesRead?: number;
+  pagesNeedingOcr?: number;
   sizeBytes?: number;
   errorMessage?: string;
+  progressMessage?: string;
+  deduplicated?: boolean;
   createdAt?: string;
   chapters?: Array<{ title: string; pageStart: number; pageEnd: number }>;
 }
 
 export interface LearningPathItem {
   id: string;
+  documentId?: string | null;
   title: string;
   grade: number;
   subjectId: string;
@@ -161,8 +173,17 @@ export interface TeacherActionRow {
   conceptId: string;
   actionType: string;
   notes: string;
-  status: 'proposed' | 'accepted' | 'dismissed' | 'superseded';
+  status: 'proposed' | 'accepted' | 'dismissed' | 'edited' | 'superseded';
+  studentResponse?: { decision: string; note?: string; respondedAt?: string } | null;
   createdAt: string;
+}
+
+export interface RosterMember {
+  studentId: string;
+  studentName: string;
+  profileMissing: boolean;
+  status: 'active' | 'removed';
+  joinedAt: string | null;
 }
 
 export interface EvidenceMatrixResponse {
@@ -174,6 +195,17 @@ export interface EvidenceMatrixResponse {
   totalStudents: number;
   matrix: EvidenceMatrixRow[];
   actions: TeacherActionRow[];
+  classGaps?: ClassGapRow[];
+}
+
+export interface ClassGapRow {
+  conceptId: string;
+  studentsWithEvidence: number;
+  averageScore: number | null;
+  bands: Record<EvidenceBand, number>;
+  studentsNeedingSupport: number;
+  supportNames: string[];
+  priority: number;
 }
 
 export interface DashboardStats {
@@ -212,6 +244,277 @@ export interface RecentAttemptItem {
   occurredAt: string | null;
 }
 
+export interface LearnerEvidenceItem {
+  conceptId: string;
+  label: string;
+  band: EvidenceBand;
+  score: number | null;
+  evidenceCount: number;
+  calculatedAt?: string | null;
+}
+
+export interface LearnerInsightBlock {
+  state: 'measured' | 'no_evidence';
+  detail: string;
+}
+
+export interface LearnerAccuracy extends LearnerInsightBlock {
+  overall: number | null;
+  lastSevenDays: number | null;
+  previousSevenDays: number | null;
+  trend: 'improving' | 'needs_support' | 'steady' | 'starting' | 'no_evidence';
+  practiceAccuracy?: number | null;
+  checkpointAccuracy?: number | null;
+}
+
+export interface LearnerPace extends LearnerInsightBlock {
+  medianAnswerSeconds: number | null;
+  medianSessionMinutes: number | null;
+  dailyGoalMinutes: number | null;
+  goalProgress: number | null;
+  label: string;
+}
+
+export interface LearnerHints extends LearnerInsightBlock {
+  hintedAttempts: number;
+  totalAttempts: number;
+  hintRate: number | null;
+  averageHints: number | null;
+  accuracyWithHints: number | null;
+  accuracyWithoutHints: number | null;
+  label: string;
+}
+
+export interface LearnerRoutineWindow {
+  id: string;
+  label: string;
+  minutes: number;
+  sessions: number;
+  attempts: number;
+  correct: number;
+  accuracy: number | null;
+}
+
+export interface LearnerRoutine extends LearnerInsightBlock {
+  windows: LearnerRoutineWindow[];
+  bestWindow: LearnerRoutineWindow | null;
+  currentStreak: number;
+  longestStreak: number;
+  activeDays: number;
+  consistencyScore: number;
+  consistencyLabel: string;
+  weekdayMinutes: number;
+  weekendMinutes: number;
+  timezoneNote?: string;
+}
+
+export interface LearnerMastery extends LearnerInsightBlock {
+  concepts: LearnerEvidenceItem[];
+  strengths: LearnerEvidenceItem[];
+  focusAreas: LearnerEvidenceItem[];
+  bands: {
+    demonstrated: number;
+    approaching: number;
+    developing: number;
+    notEnoughEvidence: number;
+  };
+}
+
+export interface LearnerHabit {
+  id: string;
+  tone: 'positive' | 'neutral' | 'watch';
+  title: string;
+  detail: string;
+}
+
+export interface LearnerInsights {
+  generatedAt: string;
+  state: 'measured' | 'no_evidence';
+  confidence: 'none' | 'low' | 'medium' | 'high';
+  confidenceDetail: string;
+  summary: string;
+  library: { activePaths: number; readyLessons: number };
+  evidence: {
+    studyEvents: number;
+    gradedAttempts: number;
+    practiceAttempts: number;
+    checkpointAttempts: number;
+    conceptEvidence: number;
+    activeDays: number;
+    totalMinutes: number;
+  };
+  accuracy: LearnerAccuracy;
+  pace: LearnerPace;
+  hintReliance: LearnerHints;
+  routine: LearnerRoutine;
+  mastery: LearnerMastery;
+  habits: LearnerHabit[];
+}
+
+export interface StudyPlanTask {
+  id: string;
+  kind: 'remediate' | 'review' | 'continue' | 'next_lesson' | 'practice' | 'stretch';
+  priority: number;
+  slot: string;
+  title: string;
+  reason: string;
+  actionLabel: string;
+  pathId: string;
+  pathTitle: string;
+  subjectId: string;
+  subjectLabel: string;
+  lessonId: string | null;
+  lessonTitle: string | null;
+  conceptId: string | null;
+  conceptLabel: string | null;
+  evidence: Record<string, unknown>;
+}
+
+export interface StudyPlanBook {
+  pathId: string;
+  title: string;
+  documentTitle: string | null;
+  grade: number;
+  subjectId: string;
+  subjectLabel: string;
+  status: string;
+  totalLessons: number;
+  readyLessons: number;
+  completedLessons: number;
+  mastery: {
+    demonstrated: number;
+    approaching: number;
+    developing: number;
+    notEnoughEvidence: number;
+  };
+  strongestConcept: LearnerEvidenceItem | null;
+  focusConcept: LearnerEvidenceItem | null;
+  inProgressLesson: { lessonId: string; title: string } | null;
+  nextLesson: { lessonId: string; title: string } | null;
+}
+
+export interface StudyPlan {
+  generatedAt: string;
+  state: 'active' | 'preparing' | 'empty';
+  summary: string;
+  subjectMix: string[];
+  bookCount: number;
+  taskCount: number;
+  tasks: StudyPlanTask[];
+  books: StudyPlanBook[];
+  roadmap: Array<{
+    pathId: string;
+    title: string;
+    subjectLabel: string;
+    lessons: Array<{
+      lessonId: string;
+      title: string;
+      sequence: number;
+      status: string;
+      attempts: number;
+      readingMinutes: number;
+    }>;
+  }>;
+  counts: {
+    completedLessons: number;
+    readyLessons: number;
+    totalLessons: number;
+    waitingBooks: number;
+  };
+}
+
+export interface CoachRootGap {
+  conceptId: string;
+  label: string;
+  band: EvidenceBand;
+  score: number | null;
+  evidenceCount: number;
+  lessonTitle: string;
+  sequence: number;
+  distance: number;
+  reason: string;
+}
+
+export interface CoachCard {
+  id: string;
+  scope: 'attempt' | 'lesson';
+  tone?: 'celebrate' | 'retry';
+  headline?: string;
+  body: string;
+  conceptId?: string | null;
+  conceptLabel?: string | null;
+  rootGap?: CoachRootGap | null;
+  mastery?: { band?: string; score?: number; evidenceCount?: number };
+  nextStep?: { title?: string; reason?: string; action?: string };
+  keyPoint?: { title: string; body: string } | null;
+  source?: { page: number; title: string; excerpt: string } | null;
+  studyTip?: { title: string; body: string } | null;
+  evidence?: Record<string, unknown>;
+}
+
+export interface LessonCoachMoment {
+  id: string;
+  kind: 'key_point' | 'source_spotlight' | 'fun_fact' | 'study_tip' | 'challenge';
+  title: string;
+  body: string;
+  evidence?: string;
+  source?: { page: number; title: string };
+}
+
+export interface LessonCoaching {
+  lessonId: string;
+  lessonTitle: string;
+  state: 'ready' | 'no_source_material';
+  intro: string;
+  difficulty: 'standard' | 'challenge';
+  challengeCount: number;
+  concepts: string[];
+  developingConcepts: string[];
+  moments: LessonCoachMoment[];
+  autoShowId: string | null;
+  generatedAt: string;
+}
+
+export interface SmartCheckQuestion {
+  questionKey: string;
+  lessonVersionId: string;
+  lessonId: string;
+  pathId: string;
+  lessonTitle: string;
+  pathTitle: string;
+  subjectId: string;
+  subjectLabel: string;
+  conceptId: string;
+  conceptLabel: string;
+  prompt: string;
+  type: string;
+  options: string[];
+  difficulty: string;
+  why: string;
+  mastery: { band: EvidenceBand; score: number | null; evidenceCount: number };
+}
+
+export interface SmartCheckResponse {
+  state: 'ready' | 'no_questions';
+  message: string;
+  questions: SmartCheckQuestion[];
+  maxQuestions: number;
+  coverage?: {
+    availableConcepts: number;
+    measuredConcepts: number;
+    unknownConcepts: number;
+  };
+}
+
+export interface SmartCheckNextResponse {
+  state: 'question' | 'complete';
+  stopReason: 'max_questions' | 'enough_evidence' | 'no_more_questions' | null;
+  message: string;
+  question: SmartCheckQuestion | null;
+  answeredCount: number;
+  remaining?: number;
+}
+
 export interface StudentDashboardResponse {
   profile: UserProfileData;
   stats: DashboardStats;
@@ -226,6 +529,8 @@ export interface StudentDashboardResponse {
     joinCode: string;
     joinedAt: string;
   }>;
+  understanding?: LearnerInsights;
+  teaching?: { canTeach: boolean; ownedClassrooms: number };
 }
 
 export interface AttemptSubmission {
@@ -254,7 +559,18 @@ export interface AttemptResult {
     remediationInjected?: boolean;
     remediationLessonId?: string;
   };
+  coaching?: CoachCard | null;
   alreadyRecorded: boolean;
+}
+
+export class ApiError extends Error {
+  status: number;
+
+  constructor(message: string, status: number) {
+    super(message);
+    this.name = 'ApiError';
+    this.status = status;
+  }
 }
 
 export function authHeaders(): Record<string, string> {
@@ -282,7 +598,7 @@ async function request<T>(endpoint: string, options: RequestInit = {}): Promise<
     } catch {
       // ignore
     }
-    throw new Error(errorDetail || `Request failed with status ${response.status}`);
+    throw new ApiError(errorDetail || `Request failed with status ${response.status}`, response.status);
   }
 
   return response.json();
@@ -349,7 +665,7 @@ export const api = {
     file: File,
     onProgress?: (percent: number) => void,
     requestRef?: { current: XMLHttpRequest | null }
-  ): Promise<{ documentId: string; filename: string; pageCount: number; chunkCount: number; status: string; errorMessage?: string }> {
+  ): Promise<{ documentId: string; filename: string; pageCount: number; chunkCount: number; status: string; errorMessage?: string; progressMessage?: string; deduplicated?: boolean }> {
     return new Promise((resolve, reject) => {
       const xhr = new XMLHttpRequest();
       if (requestRef) requestRef.current = xhr;
@@ -448,6 +764,7 @@ export const api = {
     questionText: string;
     answerJson?: any;
     lastErrorCode?: string | null;
+    pathId?: string | null;
     lessonVersionId?: string | null;
     sourcePage?: number;
     blockId?: string;
@@ -479,6 +796,40 @@ export const api = {
 
   async getEvidenceMatrix(classroomId: string): Promise<EvidenceMatrixResponse> {
     return request<EvidenceMatrixResponse>(`/teacher/classrooms/${classroomId}/evidence-matrix`);
+  },
+
+  async getClassroomRoster(classroomId: string): Promise<{
+    classroomId: string;
+    joinCode: string | null;
+    members: RosterMember[];
+  }> {
+    return request(`/teacher/classrooms/${classroomId}/roster`);
+  },
+
+  async rotateJoinCode(classroomId: string): Promise<{ classroomId: string; joinCode: string }> {
+    return request(`/teacher/classrooms/${classroomId}/rotate-join-code`, { method: 'POST' });
+  },
+
+  async updateClassroomMember(
+    classroomId: string,
+    studentId: string,
+    status: 'active' | 'removed'
+  ): Promise<{ classroomId: string; studentId: string; status: string }> {
+    return request(`/teacher/classrooms/${classroomId}/members/${studentId}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ status }),
+    });
+  },
+
+  async decideTeacherAction(
+    actionId: string,
+    decision: 'accept' | 'dismiss' | 'override',
+    notes?: string
+  ): Promise<{ id: string; status: string; decision: string; notes: string }> {
+    return request(`/teacher/actions/${actionId}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ decision, notes }),
+    });
   },
 
   async addRecommendation(data: { classroomId: string; studentId: string; conceptId: string; actionType: string; notes: string }): Promise<{
@@ -527,6 +878,29 @@ export const api = {
     }>;
   }> {
     return request('/study/summary');
+  },
+
+  async getLearnerInsights(): Promise<LearnerInsights> {
+    return request<LearnerInsights>('/study/insights');
+  },
+
+  async getStudyPlan(): Promise<StudyPlan> {
+    return request<StudyPlan>('/study/plan');
+  },
+
+  async getLessonCoaching(lessonId: string): Promise<LessonCoaching> {
+    return request<LessonCoaching>(`/study/coach/${lessonId}`);
+  },
+
+  async getSmartCheck(): Promise<SmartCheckResponse> {
+    return request<SmartCheckResponse>('/study/smart-check');
+  },
+
+  async getNextSmartQuestion(answeredQuestionKeys: string[]): Promise<SmartCheckNextResponse> {
+    return request<SmartCheckNextResponse>('/study/smart-check/next', {
+      method: 'POST',
+      body: JSON.stringify({ answeredQuestionKeys }),
+    });
   },
 
   async getStudentDashboard(): Promise<StudentDashboardResponse> {

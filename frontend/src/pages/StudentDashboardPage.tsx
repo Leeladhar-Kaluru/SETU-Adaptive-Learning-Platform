@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
   api,
@@ -7,6 +7,7 @@ import {
 } from '../services/api';
 import { useAuth } from '../context/AuthContext';
 import { useTaxonomy } from '../hooks/useTaxonomy';
+import { useDialogFocus } from '../hooks/useDialogFocus';
 import { GRADES, gradeLabel } from '../lib/academic';
 import styles from './StudentDashboardPage.module.css';
 
@@ -16,10 +17,11 @@ export const StudentDashboardPage: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [selectedDay, setSelectedDay] = useState<ActivityHeatmapDay | null>(null);
+  const [heatmapAsTable, setHeatmapAsTable] = useState(false);
 
   // Classroom join state
   const [joinCodeInput, setJoinCodeInput] = useState('');
-  const [joinStatus, setJoinStatus] = useState<string | null>(null);
+  const [joinStatus, setJoinStatus] = useState<{ kind: 'ok' | 'error'; message: string } | null>(null);
   const [isJoining, setIsJoining] = useState(false);
 
   // Profile Edit modal state
@@ -31,7 +33,9 @@ export const StudentDashboardPage: React.FC = () => {
   const [editGoal, setEditGoal] = useState<number | ''>('');
   const [editError, setEditError] = useState<string | null>(null);
   const [isSavingProfile, setIsSavingProfile] = useState(false);
-  const taxonomy = useTaxonomy(isEditOpen);
+  const taxonomy = useTaxonomy(true);
+  const editDialogRef = useRef<HTMLDivElement>(null);
+  useDialogFocus(editDialogRef, isEditOpen, () => setIsEditOpen(false));
 
   const fetchDashboardData = async () => {
     try {
@@ -64,11 +68,14 @@ export const StudentDashboardPage: React.FC = () => {
     setJoinStatus(null);
     try {
       await api.joinClassroom(joinCodeInput.trim().toUpperCase());
-      setJoinStatus('Joined classroom successfully!');
+      setJoinStatus({ kind: 'ok', message: 'Joined the classroom.' });
       setJoinCodeInput('');
       fetchDashboardData();
     } catch (err: any) {
-      setJoinStatus(err?.message || 'Failed to join classroom. Check the code and try again.');
+      setJoinStatus({
+        kind: 'error',
+        message: err?.message || 'Could not join. Check the code with your teacher and try again.',
+      });
     } finally {
       setIsJoining(false);
     }
@@ -79,6 +86,10 @@ export const StudentDashboardPage: React.FC = () => {
     setEditError(null);
     if (editGrade === '' || !editBoard || !editLanguage) {
       setEditError('Choose a class, board, and language before saving.');
+      return;
+    }
+    if (!editName.trim()) {
+      setEditError('Enter the name your teacher will see.');
       return;
     }
     setIsSavingProfile(true);
@@ -102,7 +113,7 @@ export const StudentDashboardPage: React.FC = () => {
   if (loading) {
     return (
       <div className={styles.container}>
-        <p style={{ padding: '40px 0', color: 'var(--ink-secondary)' }}>
+        <p className={styles.loadNote} role="status">
           Loading your learning progress and activity heatmap…
         </p>
       </div>
@@ -114,8 +125,10 @@ export const StudentDashboardPage: React.FC = () => {
       <div className={styles.container}>
         <div className={styles.profileCard}>
           <div>
-            <h2>Unable to load dashboard</h2>
-            <p style={{ color: 'var(--ink-secondary)', marginTop: 8 }}>{error}</p>
+            <h1 className={styles.stateTitle}>Unable to load dashboard</h1>
+            <p className={styles.errorText}>
+              {error || 'The dashboard response was empty.'}
+            </p>
           </div>
           <button type="button" className={styles.editBtn} onClick={fetchDashboardData}>
             Retry
@@ -126,7 +139,19 @@ export const StudentDashboardPage: React.FC = () => {
   }
 
   const { profile, stats, activityHeatmap, conceptMastery, recentAttempts, classrooms } = data;
+  const understanding = data.understanding;
   const initial = profile.displayName ? profile.displayName.charAt(0).toUpperCase() : 'S';
+  const boardName = taxonomy.boards.find((board) => board.id === profile.boardId)?.name;
+  const languageName = taxonomy.languages.find(
+    (language) => language.bcp47Tag === profile.preferredLanguage
+  )?.nativeName;
+  const subjectName = (subjectId: string) =>
+    taxonomy.subjects.find((subject) => subject.id === subjectId)?.canonicalName || subjectId;
+  const conceptLabel = (conceptId: string) =>
+    conceptId.replace(/^concept[-_]/, '').replace(/[-_]/g, ' ');
+
+  const profileIncomplete =
+    profile.grade == null || !profile.boardId || !profile.preferredLanguage;
 
   const formatBandName = (band: string) => {
     switch (band) {
@@ -165,23 +190,32 @@ export const StudentDashboardPage: React.FC = () => {
     }
   };
 
+  const recordedDays = activityHeatmap.filter((day) => day.count > 0 || day.seconds > 0);
+
   return (
     <div className={styles.container}>
-      {/* 1. Profile Header Card */}
-      <section className={styles.profileCard}>
+      {/* 1. Profile header */}
+      <section className={styles.profileCard} aria-label="Student record">
         <div className={styles.profileLeft}>
-          <div className={styles.avatar}>{initial}</div>
+          <div className={styles.avatar} aria-hidden="true">{initial}</div>
           <div className={styles.profileInfo}>
+            <span className={styles.eyebrow}>Student record</span>
             <h1>{profile.displayName}</h1>
             {profile.email && <div className={styles.profileEmail}>{profile.email}</div>}
             <div className={styles.badgeRow}>
               {profile.grade != null && (
-                <span className={`${styles.badge} ${styles.badgeBrand}`}>Class {profile.grade}</span>
+                <span className={`${styles.badge} ${styles.badgeBrand}`}>{gradeLabel(profile.grade)}</span>
               )}
               {profile.boardId && (
-                <span className={`${styles.badge} ${styles.badgeBoard}`}>
-                  {profile.boardId.replace('board-', '').toUpperCase()}
+                <span
+                  className={`${styles.badge} ${boardName ? styles.badgeBoard : styles.badgeCode}`}
+                  title={boardName ? undefined : `Stored board id: ${profile.boardId}`}
+                >
+                  {boardName || profile.boardId}
                 </span>
+              )}
+              {languageName && (
+                <span className={`${styles.badge} ${styles.badgeBoard}`}>{languageName}</span>
               )}
               {profile.dailyGoalMinutes != null && (
                 <span className={`${styles.badge} ${styles.badgeGoal}`}>
@@ -189,7 +223,7 @@ export const StudentDashboardPage: React.FC = () => {
                 </span>
               )}
             </div>
-            {(!profile.grade || !profile.boardId || !profile.preferredLanguage) && (
+            {profileIncomplete && (
               <div className={styles.emptyNotice}>
                 Add your class, board, and language to finish setting up your desk.
                 <button
@@ -205,64 +239,151 @@ export const StudentDashboardPage: React.FC = () => {
         </div>
         <div className={styles.profileRight}>
           <button type="button" className={styles.editBtn} onClick={() => setIsEditOpen(true)}>
-            Edit Academic Profile
+            Edit academic profile
           </button>
         </div>
       </section>
 
-      {/* 2. Key Academic Stats */}
-      <section className={styles.statsGrid}>
-        <div className={styles.statCard}>
-          <span className={styles.statLabel}>Current Streak</span>
-          <span className={styles.statValue}>
-            {stats.currentStreak} {stats.currentStreak === 1 ? 'Day' : 'Days'}
-          </span>
-          <span className={styles.statSub}>
-            {stats.currentStreak > 0 ? 'Consistency maintained!' : 'Complete an activity today'}
-          </span>
-        </div>
+      {/* 2. Study summary */}
+      <section aria-labelledby="study-summary-title">
+        <h2 id="study-summary-title" className={styles.sectionHeading}>
+          Study summary
+        </h2>
+        <dl className={styles.statsRow}>
+          <div className={styles.summaryItem}>
+            <dt className={styles.statLabel}>Current streak</dt>
+            <dd className={styles.statValue}>
+              {stats.currentStreak} {stats.currentStreak === 1 ? 'day' : 'days'}
+            </dd>
+            <span className={styles.statSub}>
+              {stats.currentStreak > 0
+                ? 'Recorded activity includes today.'
+                : 'No activity recorded today.'}
+            </span>
+          </div>
 
-        <div className={styles.statCard}>
-          <span className={styles.statLabel}>Longest Streak</span>
-          <span className={styles.statValue}>
-            {stats.longestStreak} {stats.longestStreak === 1 ? 'Day' : 'Days'}
-          </span>
-          <span className={styles.statSub}>Personal best consistency</span>
-        </div>
+          <div className={styles.summaryItem}>
+            <dt className={styles.statLabel}>Longest streak</dt>
+            <dd className={styles.statValue}>
+              {stats.longestStreak} {stats.longestStreak === 1 ? 'day' : 'days'}
+            </dd>
+            <span className={styles.statSub}>Personal best from recorded days.</span>
+          </div>
 
-        <div className={styles.statCard}>
-          <span className={styles.statLabel}>Total Time Studied</span>
-          <span className={styles.statValue}>
-            {stats.totalMinutesStudied >= 60
-              ? `${(stats.totalMinutesStudied / 60).toFixed(1)} hrs`
-              : `${stats.totalMinutesStudied} mins`}
-          </span>
-          <span className={styles.statSub}>Across {stats.totalSessions} study sessions</span>
-        </div>
+          <div className={styles.summaryItem}>
+            <dt className={styles.statLabel}>Time studied</dt>
+            <dd className={styles.statValue}>
+              {stats.totalMinutesStudied >= 60
+                ? `${(stats.totalMinutesStudied / 60).toFixed(1)} hrs`
+                : `${stats.totalMinutesStudied} mins`}
+            </dd>
+            <span className={styles.statSub}>
+              Across {stats.totalSessions} {stats.totalSessions === 1 ? 'study session' : 'study sessions'}.
+            </span>
+          </div>
 
-        <div className={styles.statCard}>
-          <span className={styles.statLabel}>Checkpoint Accuracy</span>
-          <span className={styles.statValue}>
-            {stats.totalQuestionsAttempted === 0 ? '—' : `${stats.averageAccuracy}%`}
-          </span>
-          <span className={styles.statSub}>
-            {stats.totalQuestionsAttempted === 0
-              ? 'No checkpoint attempts yet'
-              : `${stats.totalQuestionsAttempted} questions attempted`}
-          </span>
-        </div>
+          <div className={styles.summaryItem}>
+            <dt className={styles.statLabel}>Answer accuracy</dt>
+            <dd className={styles.statValue}>
+              {stats.totalQuestionsAttempted === 0 ? '—' : `${stats.averageAccuracy}%`}
+            </dd>
+            <span className={styles.statSub}>
+              {stats.totalQuestionsAttempted === 0
+                ? 'No checkpoint attempts yet'
+                : `${stats.totalQuestionsAttempted} ${stats.totalQuestionsAttempted === 1 ? 'question' : 'questions'} attempted`}
+            </span>
+          </div>
+        </dl>
       </section>
 
-      {/* 3. Learning Consistency Heatmap (12 Weeks / 84 Days) */}
-      <section className={styles.heatmapCard}>
+      {/* 3. How you learn */}
+      {understanding && (
+        <section className={styles.understandingCard} aria-labelledby="understanding-title">
+          <div className={styles.cardHeader}>
+            <div>
+              <h2 id="understanding-title" className={styles.cardTitle}>How you learn</h2>
+              <div className={styles.cardSubtitle}>
+                Derived only from your recorded sessions, answers, hints and timing.
+              </div>
+            </div>
+            <span className={styles.confidenceBadge}>
+              {understanding.confidence === 'none'
+                ? 'No evidence yet'
+                : `${understanding.confidence} confidence`}
+            </span>
+          </div>
+
+          <p className={styles.understandingSummary}>{understanding.summary}</p>
+
+          <dl className={styles.understandingGrid}>
+            <div>
+              <dt>Accuracy trend</dt>
+              <dd>{understanding.accuracy.overall === null ? '—' : `${understanding.accuracy.overall}%`}</dd>
+              <span>{understanding.accuracy.detail}</span>
+            </div>
+            <div>
+              <dt>Best study window</dt>
+              <dd>{understanding.routine.bestWindow?.label || 'No routine yet'}</dd>
+              <span>{understanding.routine.detail}</span>
+            </div>
+            <div>
+              <dt>Working pace</dt>
+              <dd>
+                {understanding.pace.medianAnswerSeconds === null
+                  ? 'No timed answers'
+                  : `${understanding.pace.medianAnswerSeconds}s median`}
+              </dd>
+              <span>{understanding.pace.detail}</span>
+            </div>
+            <div>
+              <dt>Hint reliance</dt>
+              <dd>{understanding.hintReliance.hintRate === null ? '—' : `${understanding.hintReliance.hintRate}%`}</dd>
+              <span>{understanding.hintReliance.detail}</span>
+            </div>
+          </dl>
+
+          {understanding.habits.length > 0 && (
+            <ul className={styles.habitList}>
+              {understanding.habits.map((habit) => (
+                <li
+                  key={habit.id}
+                  className={
+                    habit.tone === 'watch'
+                      ? styles.habitWatch
+                      : habit.tone === 'positive'
+                        ? styles.habitPositive
+                        : styles.habitNeutral
+                  }
+                >
+                  <strong>{habit.title}</strong>
+                  <span>{habit.detail}</span>
+                </li>
+              ))}
+            </ul>
+          )}
+
+          <div className={styles.evidenceFoot}>
+            <span>{understanding.confidenceDetail}</span>
+            <span>
+              {understanding.evidence.activeDays} active{' '}
+              {understanding.evidence.activeDays === 1 ? 'day' : 'days'} ·{' '}
+              {understanding.evidence.totalMinutes} minutes ·{' '}
+              {understanding.evidence.gradedAttempts} graded answers
+            </span>
+          </div>
+        </section>
+      )}
+
+      {/* 4. Activity heatmap */}
+      <section className={styles.heatmapCard} aria-labelledby="heatmap-title">
         <div className={styles.cardHeader}>
           <div>
-            <div className={styles.cardTitle}>Learning Consistency Heatmap</div>
+            <h2 id="heatmap-title" className={styles.cardTitle}>Learning consistency</h2>
             <div className={styles.cardSubtitle}>
-              Activity distribution over the past 12 weeks (84 days) across reading and checkpoints.
+              Recorded activity over the last 84 days. Empty days had no study events.
             </div>
           </div>
-          <div className={styles.heatmapLegend}>
+          <div className={styles.heatmapLegend} aria-hidden="true">
             <span>Less</span>
             <div className={styles.legendCells}>
               <span className={`${styles.legendBox} ${styles.level0}`} />
@@ -275,55 +396,104 @@ export const StudentDashboardPage: React.FC = () => {
           </div>
         </div>
 
-        <div className={styles.heatmapScroll}>
-          {stats.totalSessions === 0 ? (
-            <div className={styles.emptyNotice}>
-              No study activity yet. Open a ready lesson to start the heatmap.
+        {recordedDays.length === 0 ? (
+          <div className={styles.emptyNotice}>
+            No study activity yet. Open a ready lesson to start the heatmap.
+          </div>
+        ) : (
+          <>
+            <div className={styles.heatmapToolbar}>
+              <button
+                type="button"
+                className={styles.heatmapToggle}
+                aria-pressed={heatmapAsTable}
+                onClick={() => setHeatmapAsTable((value) => !value)}
+                disabled={recordedDays.length === 0}
+              >
+                {heatmapAsTable ? 'Show as grid' : 'Show as table'}
+              </button>
+              <span className={styles.heatmapCount}>
+                {recordedDays.length} {recordedDays.length === 1 ? 'day' : 'days'} with recorded activity
+              </span>
             </div>
-          ) : (
-            <div className={styles.heatmapContainer}>
-              <div className={styles.heatmapGrid}>
-                {activityHeatmap.map((day) => {
-                  const levelClass =
-                    day.level === 4
-                      ? styles.level4
-                      : day.level === 3
-                      ? styles.level3
-                      : day.level === 2
-                      ? styles.level2
-                      : day.level === 1
-                      ? styles.level1
-                      : styles.level0;
 
-                  return (
-                    <div
-                      key={day.date}
-                      className={`${styles.heatmapCell} ${levelClass}`}
-                      onClick={() => setSelectedDay(day)}
-                      title={`${day.date}: ${day.minutes} min studied (${day.count} activities)`}
-                    />
-                  );
-                })}
+            {heatmapAsTable ? (
+              <table className={styles.heatmapTable}>
+                <caption className={styles.srOnly}>
+                  Days with recorded study activity in the last 84 days
+                </caption>
+                <thead>
+                  <tr>
+                    <th scope="col">Date</th>
+                    <th scope="col">Minutes</th>
+                    <th scope="col">Activities</th>
+                    <th scope="col">Level</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {recordedDays.map((day) => (
+                    <tr key={day.date}>
+                      <th scope="row">{day.date}</th>
+                      <td>{day.minutes}</td>
+                      <td>{day.count}</td>
+                      <td>{day.level} of 4</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            ) : (
+              <div className={styles.heatmapContainer}>
+                <div className={styles.heatmapGrid} role="group" aria-label="Daily study activity">
+                  {activityHeatmap.map((day) => {
+                    const levelClass =
+                      day.level === 4
+                        ? styles.level4
+                        : day.level === 3
+                        ? styles.level3
+                        : day.level === 2
+                        ? styles.level2
+                        : day.level === 1
+                        ? styles.level1
+                        : styles.level0;
+
+                    return (
+                      <button
+                        key={day.date}
+                        type="button"
+                        className={`${styles.heatmapCell} ${levelClass}`}
+                        aria-pressed={selectedDay?.date === day.date}
+                        aria-label={`${day.date}: ${day.minutes} minutes across ${day.count} ${
+                          day.count === 1 ? 'activity' : 'activities'
+                        }`}
+                        onClick={() => setSelectedDay(day)}
+                        title={`${day.date}: ${day.minutes} min studied (${day.count} activities)`}
+                      />
+                    );
+                  })}
+                </div>
               </div>
-            </div>
+            )}
+          </>
+        )}
+
+        <div className={styles.activeDayTooltip} role="status" aria-live="polite">
+          {selectedDay ? (
+            <>
+              <strong>{selectedDay.date}</strong>: {selectedDay.minutes} minutes studied across{' '}
+              {selectedDay.count} {selectedDay.count === 1 ? 'activity' : 'activities'}.
+            </>
+          ) : (
+            'Select a day to see its recorded activity.'
           )}
         </div>
-
-        {selectedDay && (
-          <div className={styles.activeDayTooltip}>
-            <strong>{selectedDay.date}</strong>: {selectedDay.minutes} minutes studied across{' '}
-            {selectedDay.count} interactions.
-          </div>
-        )}
       </section>
 
-      {/* 4. Split Section: Concept Mastery Matrix + Recent Checkpoints */}
+      {/* 5. Concept evidence and recent attempts */}
       <div className={styles.twoColGrid}>
-        {/* Concept Mastery Matrix */}
-        <section className={styles.sectionCard}>
-          <div className={styles.cardTitle}>Concept Mastery Matrix</div>
+        <section className={styles.sectionCard} aria-labelledby="mastery-title">
+          <h2 id="mastery-title" className={styles.cardTitle}>Concept mastery</h2>
           <div className={styles.cardSubtitle}>
-            Evidence-backed mastery calculations across syllabus concepts.
+            Bands are calculated from your recorded checkpoint evidence.
           </div>
 
           {conceptMastery.length === 0 ? (
@@ -340,9 +510,10 @@ export const StudentDashboardPage: React.FC = () => {
                   }`}
                 >
                   <div className={styles.masteryTop}>
-                    <span className={styles.conceptName}>
-                      {item.conceptId.replace(/_/g, ' ')}
-                    </span>
+                    <div className={styles.conceptBlock}>
+                      <span className={styles.conceptName}>{conceptLabel(item.conceptId)}</span>
+                      <code className={styles.conceptCode}>{item.conceptId}</code>
+                    </div>
                     <span className={`${styles.bandPill} ${getBandClass(item.band)}`}>
                       {formatBandName(item.band)}
                     </span>
@@ -351,21 +522,22 @@ export const StudentDashboardPage: React.FC = () => {
                   <div className={styles.scoreBarTrack}>
                     <div
                       className={`${styles.scoreBarFill} ${getFillClass(item.band)}`}
-                      style={{ width: `${item.score}%` }}
+                      style={{ width: `${Math.max(0, Math.min(100, item.score))}%` }}
                     />
                   </div>
 
                   <div className={styles.masteryFoot}>
                     <span>
-                      Score: {item.score}% ({item.evidenceCount} evidence points)
+                      {item.score}% from {item.evidenceCount}{' '}
+                      {item.evidenceCount === 1 ? 'evidence point' : 'evidence points'}
                     </span>
                     {item.needsRemediation && (
-                      <div className={styles.remediationAlert}>
-                        <span>Refresher Injected</span>
+                      <span className={styles.remediationAlert}>
+                        Needs review
                         <Link to="/" className={styles.reviewBtn}>
-                          Practice Now
+                          Open desk
                         </Link>
-                      </div>
+                      </span>
                     )}
                   </div>
                 </div>
@@ -374,41 +546,38 @@ export const StudentDashboardPage: React.FC = () => {
           )}
         </section>
 
-        {/* Recent Checkpoints */}
-        <section className={styles.sectionCard}>
-          <div className={styles.cardTitle}>Recent Practice Checkpoints</div>
+        <section className={styles.sectionCard} aria-labelledby="attempts-title">
+          <h2 id="attempts-title" className={styles.cardTitle}>Recent answers</h2>
           <div className={styles.cardSubtitle}>
-            Detailed log of your latest questions and understanding checks.
+            Your latest recorded answers and how long they took.
           </div>
 
           {recentAttempts.length === 0 ? (
-            <div className={styles.emptyNotice}>
-              No checkpoint attempts yet.
-            </div>
+            <div className={styles.emptyNotice}>No checkpoint attempts yet.</div>
           ) : (
             <table className={styles.attemptsTable}>
               <thead>
                 <tr>
-                  <th>Topic</th>
-                  <th>Outcome</th>
-                  <th>Hints</th>
-                  <th>Time</th>
+                  <th scope="col">Lesson</th>
+                  <th scope="col">Outcome</th>
+                  <th scope="col">Hints</th>
+                  <th scope="col">Time</th>
                 </tr>
               </thead>
               <tbody>
                 {recentAttempts.map((att) => (
                   <tr key={att.id}>
-                    <td>
-                      <div style={{ fontWeight: 600 }}>{att.lessonTitle}</div>
-                      <div style={{ fontSize: 11, color: 'var(--ink-muted)' }}>
+                    <th scope="row" className={styles.attemptTopic}>
+                      <span>{att.lessonTitle}</span>
+                      <span className={styles.attemptDate}>
                         {att.occurredAt ? new Date(att.occurredAt).toLocaleDateString() : ''}
-                      </div>
-                    </td>
+                      </span>
+                    </th>
                     <td>
                       <span
                         className={att.isCorrect ? styles.attemptCorrect : styles.attemptIncorrect}
                       >
-                        {att.isCorrect ? 'Correct' : 'Needs Review'}
+                        {att.isCorrect ? 'Correct' : 'Incorrect'}
                       </span>
                     </td>
                     <td>{att.hintsUsed}</td>
@@ -421,11 +590,12 @@ export const StudentDashboardPage: React.FC = () => {
         </section>
       </div>
 
-      {/* 5. Classrooms & Teacher Connection */}
-      <section className={styles.sectionCard}>
-        <div className={styles.cardTitle}>Enrolled Classrooms</div>
+      {/* 5. Classrooms */}
+      <section className={styles.sectionCard} aria-labelledby="classrooms-title">
+        <h2 id="classrooms-title" className={styles.cardTitle}>Classrooms</h2>
         <div className={styles.cardSubtitle}>
-          Connect with your teachers to receive personalized recommendations and evidence-based guidance.
+          Classrooms you joined with a teacher's code. Your teachers see evidence from your
+          recorded attempts.
         </div>
 
         {classrooms.length === 0 ? (
@@ -436,52 +606,89 @@ export const StudentDashboardPage: React.FC = () => {
               <div key={c.id} className={styles.classroomCard}>
                 <span className={styles.classroomName}>{c.name}</span>
                 <span className={styles.classroomMeta}>
-                  Class {c.grade} • {c.subjectScope}
+                  {gradeLabel(c.grade)} · {subjectName(c.subjectScope)}
                 </span>
-                <span className={styles.joinCodePill}>Code: {c.joinCode}</span>
+                {c.joinCode && (
+                  <span className={styles.joinCodePill}>Code: {c.joinCode}</span>
+                )}
               </div>
             ))}
           </div>
         )}
 
         <form className={styles.joinForm} onSubmit={handleJoinClassroom}>
-          <input
-            type="text"
-            className={styles.joinInput}
-            placeholder="Enter Classroom Code (e.g. CBSE10)"
-            value={joinCodeInput}
-            onChange={(e) => setJoinCodeInput(e.target.value)}
-            disabled={isJoining}
-          />
-          <button type="submit" className={styles.joinSubmitBtn} disabled={isJoining}>
-            {isJoining ? 'Joining…' : 'Join Classroom'}
-          </button>
+          <label className={styles.joinLabel} htmlFor="join-code">
+            Classroom code
+          </label>
+          <div className={styles.joinRow}>
+            <input
+              id="join-code"
+              type="text"
+              className={styles.joinInput}
+              placeholder="Enter the code from your teacher"
+              value={joinCodeInput}
+              onChange={(e) => setJoinCodeInput(e.target.value)}
+              disabled={isJoining}
+              autoComplete="off"
+            />
+            <button
+              type="submit"
+              className={styles.joinSubmitBtn}
+              disabled={isJoining || !joinCodeInput.trim()}
+            >
+              {isJoining ? 'Joining…' : 'Join classroom'}
+            </button>
+          </div>
         </form>
         {joinStatus && (
-          <div style={{ fontSize: 13, marginTop: 8, color: 'var(--brand-primary)', fontWeight: 600 }}>
-            {joinStatus}
-          </div>
+          <p
+            className={joinStatus.kind === 'ok' ? styles.joinOk : styles.joinBad}
+            role={joinStatus.kind === 'ok' ? 'status' : 'alert'}
+          >
+            {joinStatus.message}
+          </p>
         )}
       </section>
 
-      {/* Profile Edit Drawer/Modal */}
+      {/* 6. Profile editor */}
       {isEditOpen && (
         <div className={styles.modalBackdrop}>
-          <div className={styles.modalCard}>
-            <div className={styles.modalTitle}>Edit Academic Profile</div>
-            <form onSubmit={handleSaveProfile} style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+          <div
+            className={styles.modalCard}
+            ref={editDialogRef}
+            tabIndex={-1}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="edit-profile-title"
+          >
+            <div className={styles.modalHeader}>
+              <h2 id="edit-profile-title" className={styles.modalTitle}>
+                Edit academic profile
+              </h2>
+              <button
+                type="button"
+                className={styles.cancelBtn}
+                onClick={() => setIsEditOpen(false)}
+                disabled={isSavingProfile}
+              >
+                Close
+              </button>
+            </div>
+            <form className={styles.editForm} onSubmit={handleSaveProfile}>
               <div className={styles.formGroup}>
-                <label>Display Name</label>
+                <label htmlFor="edit-name">Display name</label>
                 <input
+                  id="edit-name"
                   type="text"
                   value={editName}
                   onChange={(e) => setEditName(e.target.value)}
                   required
+                  autoComplete="name"
                 />
               </div>
 
               <div className={styles.formGroup}>
-                <label htmlFor="edit-grade">Class / Grade</label>
+                <label htmlFor="edit-grade">Class / grade</label>
                 <select
                   id="edit-grade"
                   value={editGrade}
@@ -495,7 +702,7 @@ export const StudentDashboardPage: React.FC = () => {
               </div>
 
               <div className={styles.formGroup}>
-                <label htmlFor="edit-board">Curriculum Board</label>
+                <label htmlFor="edit-board">Curriculum board</label>
                 <select
                   id="edit-board"
                   value={editBoard}
@@ -512,7 +719,7 @@ export const StudentDashboardPage: React.FC = () => {
               </div>
 
               <div className={styles.formGroup}>
-                <label htmlFor="edit-language">Learning Language</label>
+                <label htmlFor="edit-language">Learning language</label>
                 <select
                   id="edit-language"
                   value={editLanguage}
@@ -546,7 +753,7 @@ export const StudentDashboardPage: React.FC = () => {
               )}
 
               <div className={styles.formGroup}>
-                <label htmlFor="edit-goal">Daily Learning Goal (Minutes)</label>
+                <label htmlFor="edit-goal">Daily learning goal (minutes)</label>
                 <input
                   id="edit-goal"
                   type="number"
@@ -584,7 +791,7 @@ export const StudentDashboardPage: React.FC = () => {
                     taxonomy.languages.length === 0
                   }
                 >
-                  {isSavingProfile ? 'Saving…' : 'Save Changes'}
+                  {isSavingProfile ? 'Saving…' : 'Save changes'}
                 </button>
               </div>
             </form>

@@ -7,7 +7,7 @@ from typing import Optional, Literal, Dict, Any
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 from app.core.database import get_db
-from app.core.security import get_current_user_id, get_current_teacher_id
+from app.core.security import get_current_educator_id, get_current_user_id
 from app.models.classroom import Classroom, ClassroomMembership, TeacherAction
 from app.models.curriculum import CurriculumBoard, Subject
 from app.models.learning import ConceptEvidence, ConceptMasterySnapshot
@@ -67,9 +67,18 @@ class RecommendationCreate(BaseModel):
     actionType: Literal["reinforce_foundations", "advance_challenge", "targeted_review"]
     notes: str = Field(min_length=3, max_length=1000)
 
+
+class RosterUpdate(BaseModel):
+    status: Literal["active", "removed"]
+
+
+class TeacherActionDecision(BaseModel):
+    decision: Literal["accept", "dismiss", "override"]
+    notes: Optional[str] = Field(default=None, max_length=500)
+
 @router.get("/classrooms")
 def list_teacher_classrooms(
-    teacher_id: uuid.UUID = Depends(get_current_teacher_id),
+    teacher_id: uuid.UUID = Depends(get_current_educator_id),
     db: Session = Depends(get_db)
 ):
     classrooms = db.query(Classroom).filter(Classroom.owner_teacher_id == teacher_id).all()
@@ -95,7 +104,7 @@ def list_teacher_classrooms(
 @router.post("/classrooms")
 def create_classroom(
     req: ClassroomCreate,
-    teacher_id: uuid.UUID = Depends(get_current_teacher_id),
+    teacher_id: uuid.UUID = Depends(get_current_educator_id),
     db: Session = Depends(get_db)
 ):
     board = db.query(CurriculumBoard).filter(
@@ -137,6 +146,94 @@ def create_classroom(
         "createdAt": cr.created_at.isoformat()
     }
 
+@router.get("/classrooms/{classroom_id}/roster")
+def get_classroom_roster(
+    classroom_id: uuid.UUID,
+    teacher_id: uuid.UUID = Depends(get_current_educator_id),
+    db: Session = Depends(get_db),
+):
+    """Authorized roster for one owned classroom, including removed memberships."""
+    classroom = _owned_classroom(db, classroom_id, teacher_id)
+    memberships = (
+        db.query(ClassroomMembership)
+        .filter(ClassroomMembership.classroom_id == classroom.id)
+        .order_by(ClassroomMembership.created_at.asc())
+        .all()
+    )
+    profiles = {}
+    student_ids = [membership.student_id for membership in memberships]
+    if student_ids:
+        profiles = {
+            profile.id: profile
+            for profile in db.query(UserProfile).filter(UserProfile.id.in_(student_ids)).all()
+        }
+
+    return {
+        "classroomId": str(classroom.id),
+        "joinCode": classroom.join_code,
+        "members": [
+            {
+                "studentId": str(membership.student_id),
+                "studentName": (
+                    profiles[membership.student_id].display_name
+                    if membership.student_id in profiles
+                    else "Account removed"
+                ),
+                "profileMissing": membership.student_id not in profiles,
+                "status": membership.status,
+                "joinedAt": membership.created_at.isoformat() if membership.created_at else None,
+            }
+            for membership in memberships
+        ],
+    }
+
+
+@router.post("/classrooms/{classroom_id}/rotate-join-code")
+def rotate_join_code(
+    classroom_id: uuid.UUID,
+    teacher_id: uuid.UUID = Depends(get_current_educator_id),
+    db: Session = Depends(get_db),
+):
+    """Issues a fresh join code and invalidates the previous one."""
+    classroom = _owned_classroom(db, classroom_id, teacher_id)
+    join_code = generate_join_code(db)
+    if join_code is None:
+        raise HTTPException(
+            status_code=503,
+            detail="Could not allocate a unique classroom code. Try again.",
+        )
+    classroom.join_code = join_code
+    db.commit()
+    db.refresh(classroom)
+    return {"classroomId": str(classroom.id), "joinCode": classroom.join_code}
+
+
+@router.patch("/classrooms/{classroom_id}/members/{student_id}")
+def update_classroom_member(
+    classroom_id: uuid.UUID,
+    student_id: uuid.UUID,
+    req: RosterUpdate,
+    teacher_id: uuid.UUID = Depends(get_current_educator_id),
+    db: Session = Depends(get_db),
+):
+    """Removes or restores one real membership without touching other classrooms."""
+    classroom = _owned_classroom(db, classroom_id, teacher_id)
+    membership = db.query(ClassroomMembership).filter(
+        ClassroomMembership.classroom_id == classroom.id,
+        ClassroomMembership.student_id == student_id,
+    ).first()
+    if not membership:
+        raise HTTPException(status_code=404, detail="That student has not joined this classroom.")
+
+    membership.status = req.status
+    db.commit()
+    return {
+        "classroomId": str(classroom.id),
+        "studentId": str(membership.student_id),
+        "status": membership.status,
+    }
+
+
 @router.post("/join")
 def join_classroom(
     req: JoinClassroomRequest,
@@ -164,6 +261,11 @@ def join_classroom(
         "joinCode": classroom.join_code,
     }
     if existing:
+        if existing.status == "removed":
+            raise HTTPException(
+                status_code=403,
+                detail="Your membership in this classroom was removed. Ask your teacher to restore it.",
+            )
         return {
             "success": True,
             "status": "already_member",
@@ -192,7 +294,7 @@ def join_classroom(
 @router.get("/classrooms/{classroom_id}/evidence-matrix")
 def get_classroom_evidence_matrix(
     classroom_id: uuid.UUID,
-    teacher_id: uuid.UUID = Depends(get_current_teacher_id),
+    teacher_id: uuid.UUID = Depends(get_current_educator_id),
     db: Session = Depends(get_db)
 ):
     classroom = _owned_classroom(db, classroom_id, teacher_id)
@@ -261,6 +363,57 @@ def get_classroom_evidence_matrix(
         .all()
     )
 
+    # Class-level gap radar: aggregate only the snapshots of active members.
+    gap_map: Dict[str, Dict[str, Any]] = {}
+    for row in matrix:
+        for concept in row["concepts"]:
+            bucket = gap_map.setdefault(
+                concept["conceptId"],
+                {
+                    "conceptId": concept["conceptId"],
+                    "studentsWithEvidence": 0,
+                    "bands": {
+                        "demonstrated": 0,
+                        "approaching": 0,
+                        "developing": 0,
+                        "not_enough_evidence": 0,
+                    },
+                    "scores": [],
+                    "studentsNeedingSupport": [],
+                },
+            )
+            bucket["studentsWithEvidence"] += 1
+            bucket["bands"][concept["band"]] = bucket["bands"].get(concept["band"], 0) + 1
+            if concept.get("score") is not None:
+                bucket["scores"].append(concept["score"])
+            if concept["band"] in ("developing", "not_enough_evidence"):
+                bucket["studentsNeedingSupport"].append(row["studentName"])
+
+    class_gaps = []
+    for bucket in gap_map.values():
+        average = (
+            round(sum(bucket["scores"]) / len(bucket["scores"]), 1)
+            if bucket["scores"]
+            else None
+        )
+        need_support = len(bucket["studentsNeedingSupport"])
+        class_gaps.append(
+            {
+                "conceptId": bucket["conceptId"],
+                "studentsWithEvidence": bucket["studentsWithEvidence"],
+                "averageScore": average,
+                "bands": bucket["bands"],
+                "studentsNeedingSupport": need_support,
+                "supportNames": bucket["studentsNeedingSupport"][:8],
+                "priority": (
+                    bucket["bands"].get("developing", 0) * 3
+                    + bucket["bands"].get("not_enough_evidence", 0)
+                    + need_support
+                ),
+            }
+        )
+    class_gaps.sort(key=lambda item: (-item["priority"], item["conceptId"]))
+
     return {
         "classroomId": str(classroom.id),
         "name": classroom.name,
@@ -270,6 +423,7 @@ def get_classroom_evidence_matrix(
         "totalStudents": len(matrix),
         "matrix": matrix,
         "students": matrix,
+        "classGaps": class_gaps,
         "actions": [
             {
                 "id": str(a.id),
@@ -278,6 +432,7 @@ def get_classroom_evidence_matrix(
                 "notes": (a.reason_json or {}).get("notes") or "",
                 "conceptId": (a.reason_json or {}).get("conceptId") or "",
                 "status": a.status,
+                "studentResponse": (a.reason_json or {}).get("studentResponse"),
                 "createdAt": a.created_at.isoformat() if a.created_at else None,
             }
             for a in actions
@@ -287,7 +442,7 @@ def get_classroom_evidence_matrix(
 @router.get("/evidence")
 def get_teacher_evidence(
     classroom_id: uuid.UUID = Query(..., alias="classroomId"),
-    teacher_id: uuid.UUID = Depends(get_current_teacher_id),
+    teacher_id: uuid.UUID = Depends(get_current_educator_id),
     db: Session = Depends(get_db),
 ):
     """Concept evidence aggregated only from the members of one owned classroom."""
@@ -328,7 +483,7 @@ def get_teacher_evidence(
 @router.post("/actions")
 def create_recommendation(
     req: RecommendationCreate,
-    teacher_id: uuid.UUID = Depends(get_current_teacher_id),
+    teacher_id: uuid.UUID = Depends(get_current_educator_id),
     db: Session = Depends(get_db)
 ):
     """Creates an explained recommendation backed by a real mastery snapshot."""
@@ -398,4 +553,59 @@ def create_recommendation(
         "conceptId": req.conceptId,
         "notes": reason_json["notes"],
         "reason": reason_json,
+    }
+
+
+@router.patch("/actions/{action_id}")
+def decide_teacher_action(
+    action_id: uuid.UUID,
+    req: TeacherActionDecision,
+    teacher_id: uuid.UUID = Depends(get_current_educator_id),
+    db: Session = Depends(get_db),
+):
+    """Teacher-side accept, dismiss, or override of a recommendation."""
+    action = db.query(TeacherAction).filter(
+        TeacherAction.id == action_id,
+        TeacherAction.teacher_id == teacher_id,
+    ).first()
+    if not action:
+        raise HTTPException(status_code=404, detail="Recommendation not found.")
+    if action.status == "superseded":
+        raise HTTPException(
+            status_code=409,
+            detail="This recommendation was replaced by a newer one.",
+        )
+
+    notes = (req.notes or "").strip()
+    if req.decision == "override" and len(notes) < 3:
+        raise HTTPException(
+            status_code=422,
+            detail="Explain the override so the student understands the change.",
+        )
+
+    status_by_decision = {
+        "accept": "accepted",
+        "dismiss": "dismissed",
+        "override": "edited",
+    }
+    action.status = status_by_decision[req.decision]
+    action.resolved_at = datetime.datetime.utcnow()
+    reason = dict(action.reason_json or {})
+    reason["teacherDecision"] = {
+        "decision": req.decision,
+        "notes": notes[:500],
+        "decidedAt": action.resolved_at.isoformat(),
+    }
+    action.reason_json = reason
+    db.commit()
+    db.refresh(action)
+
+    return {
+        "id": str(action.id),
+        "classroomId": str(action.classroom_id),
+        "studentId": str(action.student_id),
+        "actionType": action.action_type,
+        "status": action.status,
+        "decision": req.decision,
+        "notes": notes[:500],
     }

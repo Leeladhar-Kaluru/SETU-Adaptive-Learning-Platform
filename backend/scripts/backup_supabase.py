@@ -147,3 +147,4 @@ print(f"  SQL dump: {sql_backup_path} ({os.path.getsize(sql_backup_path)} bytes)
 print(f"  Manifest: {manifest_path} ({os.path.getsize(manifest_path)} bytes)")
 
 conn.close()
+

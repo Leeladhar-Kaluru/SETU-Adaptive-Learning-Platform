@@ -42,9 +42,26 @@ class AdaptiveEngineService:
 
         final_ratio = weighted_score / total_weight if total_weight > 0 else 0.0
 
-        if final_ratio >= 0.85 and count >= 3:
+        # A sustained run of independent correct answers is stronger evidence
+        # than an older mistake. Without this, a learner who misses two early
+        # practice questions and then answers five in a row unprompted stays
+        # stuck in "approaching" forever.
+        independent_streak = 0
+        for record in reversed(evidence_records):
+            if record.get("outcome") == "correct" and int(record.get("hints_used") or 0) == 0:
+                independent_streak += 1
+            else:
+                break
+
+        if (final_ratio >= 0.85 or independent_streak >= 3) and count >= 3:
             band = "demonstrated"
-            explanation = f"Consistent independent mastery demonstrated across {count} attempts ({int(final_ratio * 100)}%)."
+            if final_ratio >= 0.85:
+                explanation = f"Consistent independent mastery demonstrated across {count} attempts ({int(final_ratio * 100)}%)."
+            else:
+                explanation = (
+                    f"{independent_streak} independent correct answers in a row show recovered mastery "
+                    f"across {count} attempts ({int(final_ratio * 100)}% weighted accuracy)."
+                )
         elif final_ratio >= 0.65:
             band = "approaching"
             explanation = f"Solid understanding approaching proficiency ({int(final_ratio * 100)}%); minor reinforcement recommended."
@@ -123,3 +140,4 @@ class AdaptiveEngineService:
         }
 
 adaptive_engine = AdaptiveEngineService()
+

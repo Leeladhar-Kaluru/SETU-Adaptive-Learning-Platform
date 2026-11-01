@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://setu.local/schemas/visual-spec.schema.json",
+  "title": "SETU Safe Educational Visual Specification",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "visualId", "type", "altText", "data"],
+  "properties": {
+    "schemaVersion": {"type": "string"},
+    "visualId": {"type": "string"},
+    "type": {"enum": ["number_line", "fraction_model", "algebra_balance", "coordinate_grid", "bar_chart", "line_chart", "geometry_diagram", "science_process", "timeline", "concept_map", "labelled_image", "table"]},
+    "title": {"type": "string", "maxLength": 180},
+    "altText": {"type": "string", "minLength": 5, "maxLength": 500},
+    "description": {"type": "string", "maxLength": 1200},
+    "data": {"type": "object"},
+    "interactions": {"type": "array", "items": {"enum": ["focus_node", "toggle_label", "reveal_step", "adjust_value", "drag_point", "reset"]}},
+    "sourceRefs": {"type": "array", "items": {"type": "string"}},
+    "rightsMetadataId": {"type": "string"},
+    "fallbackText": {"type": "string", "maxLength": 2000}
+  }
+}

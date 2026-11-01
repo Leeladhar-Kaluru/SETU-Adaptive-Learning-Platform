@@ -1,0 +1,117 @@
+{
+  "recordedAt": "2026-10-30T09:38:03.658482+00:00",
+  "baseUrl": "http://127.0.0.1:8000/api/v1",
+  "environment": "disposable test database via APP_ENV=test + SETU_TEST_AUTH=1",
+  "teacher": {
+    "id": "1c54a6b4-8d8e-4f5b-9a71-2f9d4c6e8a10",
+    "displayName": "Acceptance Teacher",
+    "role": "teacher"
+  },
+  "student": {
+    "id": "6dbd85ba-49bd-491e-9bb2-d5547255f311"
+  },
+  "steps": {
+    "teacherProfile": {
+      "statusCode": 200,
+      "role": "teacher"
+    },
+    "classrooms": {
+      "statusCode": 200,
+      "count": 1,
+      "classrooms": [
+        {
+          "id": "4a19705f-c44a-4229-a1b8-47a88da6f0c6",
+          "name": "Acceptance Class 9 Science",
+          "grade": 9,
+          "boardId": "board-cbse",
+          "subjectScope": "subject-science",
+          "joinCode": "BWKN9R",
+          "memberCount": 1
+        }
+      ]
+    },
+    "roster": {
+      "statusCode": 200,
+      "count": 1,
+      "members": [
+        {
+          "studentId": "6dbd85ba-49bd-491e-9bb2-d5547255f311",
+          "studentName": "Acceptance Student",
+          "status": "active"
+        }
+      ]
+    },
+    "evidenceMatrix": {
+      "statusCode": 200,
+      "totalStudents": 1,
+      "student": {
+        "studentName": "Acceptance Student",
+        "concepts": [
+          {
+            "conceptId": "cell",
+            "band": "not_enough_evidence",
+            "score": 100.0,
+            "evidenceCount": 1,
+            "calculatedAt": "2026-10-30T09:33:34.027858"
+          },
+          {
+            "conceptId": "osmosis",
+            "band": "not_enough_evidence",
+            "score": 100.0,
+            "evidenceCount": 1,
+            "calculatedAt": "2026-10-30T09:33:33.796769"
+          },
+          {
+            "conceptId": "cell structure",
+            "band": "not_enough_evidence",
+            "score": 0.0,
+            "evidenceCount": 1,
+            "calculatedAt": "2026-10-30T09:27:02.118363"
+          },
+          {
+            "conceptId": "plasma membrane",
+            "band": "not_enough_evidence",
+            "score": 0.0,
+            "evidenceCount": 1,
+            "calculatedAt": "2026-10-30T09:27:02.112792"
+          }
+        ],
+        "accuracyRate": 1.0,
+        "accuracyKnown": true,
+        "minutesStudied": 0.2,
+        "improvement": "steady"
+      }
+    },
+    "studentBlockedFromTeacherApi": {
+      "statusCode": 403,
+      "detail": "A teacher account is required for this action."
+    },
+    "studentPaths": {
+      "statusCode": 200,
+      "count": 1,
+      "paths": [
+        {
+          "id": "a627127e-9cb7-4dc7-a649-abe67948b10d",
+          "status": "active",
+          "documentId": "9bae11de-d870-491e-b25b-5ecfcc287995",
+          "totalLessons": 6,
+          "readyLessons": 6
+        }
+      ]
+    },
+    "doubts": {
+      "statusCode": 200,
+      "count": 1,
+      "answered": "answered",
+      "citationCount": 1,
+      "sourceTitle": "e2e_science.pdf"
+    },
+    "studentDashboard": {
+      "statusCode": 200,
+      "totalQuestionsAttempted": 3,
+      "averageAccuracy": 66.7,
+      "conceptCount": 4,
+      "recentAttemptCount": 3
+    }
+  }
+}

@@ -65,6 +65,10 @@ def test_path_queues_one_job_per_lesson(client, db):
     assert len(lessons) == body["totalLessons"]
     assert len(jobs) == len(lessons)
 
+    listing = client.get("/api/v1/learning-paths", headers={"X-User-Id": str(owner_id)})
+    assert listing.status_code == 200
+    assert listing.json()[0]["documentId"] == str(doc.id)
+
 
 def test_duplicate_path_is_rejected(client, db):
     owner_id = uuid.uuid4()

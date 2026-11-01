@@ -66,5 +66,6 @@ def submit_attempt(
         "feedback": outcome.feedback,
         "mastery": outcome.mastery,
         "nextAction": outcome.next_action,
+        "coaching": outcome.coaching,
         "alreadyRecorded": outcome.already_recorded,
     }

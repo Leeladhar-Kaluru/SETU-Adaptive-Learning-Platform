@@ -7,11 +7,23 @@ from sqlalchemy.orm import Session
 from app.core.database import get_db
 from app.core.config import settings
 from app.core.security import get_current_user_id
+from app.models.classroom import Classroom
 from app.models.curriculum import CurriculumBoard, Language
 from app.models.profiles import UserProfile
 from app.services.profiles import ensure_profile_from_auth
 
 router = APIRouter()
+
+
+def _can_teach(db: Session, profile: UserProfile) -> bool:
+    if profile.role in ("teacher", "admin"):
+        return True
+    return (
+        db.query(Classroom.id)
+        .filter(Classroom.owner_teacher_id == profile.id)
+        .first()
+        is not None
+    )
 
 class SignupRequest(BaseModel):
     email: str
@@ -152,6 +164,7 @@ async def signup(req: SignupRequest, db: Session = Depends(get_db)):
             "id": str(profile.id),
             "email": profile.email,
             "role": profile.role,
+            "canTeach": _can_teach(db, profile),
             "displayName": profile.display_name,
             "grade": profile.grade,
             "boardId": profile.board_id,
@@ -211,6 +224,7 @@ async def login(req: LoginRequest, db: Session = Depends(get_db)):
             "id": str(profile.id),
             "email": profile.email,
             "role": profile.role,
+            "canTeach": _can_teach(db, profile),
             "displayName": profile.display_name,
             "grade": profile.grade,
             "boardId": profile.board_id,
@@ -236,6 +250,7 @@ async def get_me(
         "id": str(profile.id),
         "email": profile.email,
         "role": profile.role,
+        "canTeach": _can_teach(db, profile),
         "displayName": profile.display_name,
         "grade": profile.grade,
         "boardId": profile.board_id,

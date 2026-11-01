@@ -1,0 +1,39 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://setu.local/schemas/lesson-package.schema.json",
+  "title": "SETU Lesson Package",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "lessonId", "lessonVersion", "title", "grade", "subjectId", "languageTag", "sourceRefs", "objectives", "blocks", "workedExamples", "practice", "checkpointTest", "takeaways", "validation"],
+  "properties": {
+    "schemaVersion": {"type": "string"},
+    "lessonId": {"type": "string", "minLength": 1},
+    "lessonVersion": {"type": "integer", "minimum": 1},
+    "pathId": {"type": "string"},
+    "pathVersion": {"type": "integer", "minimum": 1},
+    "title": {"type": "string", "minLength": 3, "maxLength": 180},
+    "grade": {"type": "integer", "minimum": 6, "maximum": 10},
+    "subjectId": {"type": "string", "minLength": 1},
+    "languageTag": {"type": "string", "minLength": 2},
+    "translationStatus": {"enum": ["original", "reviewed_translation", "ai_draft_unreviewed", "not_available"]},
+    "estimatedMinutes": {"type": "integer", "minimum": 1, "maximum": 240},
+    "sourceRefs": {"type": "array", "items": {"$ref": "#/$defs/sourceRef"}},
+    "objectives": {"type": "array", "minItems": 1, "maxItems": 8, "items": {"type": "string", "minLength": 4, "maxLength": 240}},
+    "prerequisites": {"type": "array", "items": {"type": "object", "required": ["conceptId", "reason"], "properties": {"conceptId": {"type": "string"}, "reason": {"type": "string"}, "confidence": {"type": "number", "minimum": 0, "maximum": 1}}, "additionalProperties": false}},
+    "blocks": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/contentBlock"}},
+    "visuals": {"type": "array", "items": {"$ref": "#/$defs/visualRef"}},
+    "workedExamples": {"type": "array", "items": {"type": "object", "required": ["prompt", "steps", "answer"], "properties": {"prompt": {"type": "string"}, "steps": {"type": "array", "minItems": 1, "items": {"type": "string"}}, "answer": {"type": "string"}, "sourceRefs": {"type": "array", "items": {"$ref": "#/$defs/sourceRef"}}}, "additionalProperties": false}},
+    "practice": {"type": "array", "items": {"$ref": "#/$defs/question"}},
+    "checkpointTest": {"type": "array", "items": {"$ref": "#/$defs/question"}},
+    "misconceptions": {"type": "array", "items": {"type": "object", "required": ["label", "feedback"], "properties": {"conceptId": {"type": "string"}, "label": {"type": "string"}, "evidenceStatus": {"enum": ["observed_in_source", "candidate_hypothesis", "teacher_reviewed"]}, "feedback": {"type": "string"}}, "additionalProperties": false}},
+    "takeaways": {"type": "array", "minItems": 1, "items": {"type": "string", "maxLength": 240}},
+    "doubtAnchors": {"type": "array", "items": {"type": "object", "required": ["anchorId", "label"], "properties": {"anchorId": {"type": "string"}, "label": {"type": "string"}, "sourceRef": {"$ref": "#/$defs/sourceRef"}}, "additionalProperties": false}},
+    "validation": {"type": "object", "required": ["status", "checks"], "properties": {"status": {"enum": ["draft", "validating", "ready", "needs_human_review", "rejected"]}, "checks": {"type": "array", "items": {"type": "object", "required": ["name", "passed"], "properties": {"name": {"type": "string"}, "passed": {"type": "boolean"}, "details": {"type": "string"}}, "additionalProperties": false}}, "modelId": {"type": "string"}, "promptVersion": {"type": "string"}, "validatedAt": {"type": "string", "format": "date-time"}}, "additionalProperties": false}
+  },
+  "$defs": {
+    "sourceRef": {"type": "object", "required": ["documentVersionId", "pageStart", "citationId"], "properties": {"documentVersionId": {"type": "string"}, "pageStart": {"type": "integer", "minimum": 1}, "pageEnd": {"type": "integer", "minimum": 1}, "headingPath": {"type": "array", "items": {"type": "string"}}, "chunkId": {"type": "string"}, "citationId": {"type": "string"}, "sourceTitle": {"type": "string"}}, "additionalProperties": false},
+    "contentBlock": {"type": "object", "required": ["blockId", "kind", "content"], "properties": {"blockId": {"type": "string"}, "kind": {"enum": ["explanation", "example", "definition", "callout", "check", "summary", "vocabulary", "question_prompt", "source_excerpt"]}, "heading": {"type": "string"}, "content": {"type": "string"}, "sourceRefs": {"type": "array", "items": {"$ref": "#/$defs/sourceRef"}}, "visualId": {"type": "string"}}, "additionalProperties": false},
+    "visualRef": {"type": "object", "required": ["visualId", "type", "altText"], "properties": {"visualId": {"type": "string"}, "type": {"type": "string"}, "altText": {"type": "string"}, "spec": {"type": "object"}, "assetRef": {"type": "string"}, "rightsMetadataId": {"type": "string"}}, "additionalProperties": false},
+    "question": {"type": "object", "required": ["questionId", "type", "prompt", "conceptIds", "answerKey", "feedback"], "properties": {"questionId": {"type": "string"}, "type": {"enum": ["multiple_choice", "numeric", "short_text", "matching", "ordering", "diagram_label", "open_response"]}, "prompt": {"type": "string"}, "options": {"type": "array", "items": {"type": "string"}}, "conceptIds": {"type": "array", "minItems": 1, "items": {"type": "string"}}, "difficulty": {"enum": ["introductory", "standard", "challenge"]}, "answerKey": {"type": ["string", "number", "object", "array", "boolean"]}, "rubric": {"type": "object"}, "hints": {"type": "array", "items": {"type": "string"}}, "feedback": {"type": "string"}, "sourceRefs": {"type": "array", "items": {"$ref": "#/$defs/sourceRef"}}, "validator": {"enum": ["deterministic", "rubric", "llm_assisted_review"]}}, "additionalProperties": false}
+  }
+}

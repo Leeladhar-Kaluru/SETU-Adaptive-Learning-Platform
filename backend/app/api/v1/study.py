@@ -9,8 +9,12 @@ from sqlalchemy.orm import Session
 from app.core.database import get_db
 from app.core.security import get_current_user_id
 from app.models.classroom import TeacherAction
-from app.models.learning import StudyEvent
+from app.models.learning import LearningPath, LessonVersion, PathLesson, StudyEvent
 from app.models.profiles import UserProfile
+from app.services.coach_service import build_lesson_coaching
+from app.services.learner_insights import build_learner_insights
+from app.services.smart_check import build_smart_check, next_smart_question
+from app.services.study_plan import build_study_plan
 
 router = APIRouter()
 
@@ -92,15 +96,23 @@ def summarize_student(db: Session, owner_id: uuid.UUID) -> dict:
 
     suggestions = (
         db.query(TeacherAction)
-        .filter(TeacherAction.student_id == owner_id, TeacherAction.status == "proposed")
+        .filter(
+            TeacherAction.student_id == owner_id,
+            TeacherAction.status.in_(("proposed", "accepted", "edited")),
+        )
         .order_by(TeacherAction.created_at.desc())
-        .limit(5)
+        .limit(10)
         .all()
     )
 
     suggestion_rows = []
     for action in suggestions:
         reason = action.reason_json or {}
+        # A suggestion leaves the student's desk once the student responds to it.
+        if reason.get("studentResponse"):
+            continue
+        if len(suggestion_rows) >= 5:
+            break
         evidence = reason.get("evidence") or {}
         band = evidence.get("band")
         count = evidence.get("evidenceCount")
@@ -126,9 +138,26 @@ def summarize_student(db: Session, owner_id: uuid.UUID) -> dict:
             }
         )
 
+    reading_title = None
+    if readings:
+        latest_reading = readings[-1]
+        lesson = (
+            db.query(PathLesson)
+            .join(LearningPath, LearningPath.id == PathLesson.path_id)
+            .filter(
+                PathLesson.id == latest_reading.lesson_id,
+                LearningPath.status.in_(["active", "generating"]),
+            )
+            .first()
+            if latest_reading.lesson_id
+            else None
+        )
+        if lesson:
+            reading_title = lesson.title
+
     return {
         "minutesStudied": round(total_seconds / 60, 1),
-        "readingTitle": readings[-1].lesson_title if readings else None,
+        "readingTitle": reading_title,
         "checkpointCount": len(checkpoints),
         "accuracyRate": round(accuracy, 2) if accuracy is not None else None,
         "improvement": improvement,
@@ -168,6 +197,96 @@ def study_summary(
     return summarize_student(db, owner_id)
 
 
+@router.get("/insights")
+def learner_insights(
+    owner_id: uuid.UUID = Depends(get_current_user_id),
+    db: Session = Depends(get_db),
+):
+    """Evidence-derived understanding of routine, pace, hints, accuracy and mastery."""
+    return build_learner_insights(db, owner_id)
+
+
+@router.get("/plan")
+def adaptive_study_plan(
+    owner_id: uuid.UUID = Depends(get_current_user_id),
+    db: Session = Depends(get_db),
+):
+    """One cross-book plan that reorders itself from recorded performance."""
+    return build_study_plan(db, owner_id)
+
+
+def _owned_lesson(
+    db: Session, owner_id: uuid.UUID, lesson_id: str
+) -> tuple[PathLesson, LessonVersion]:
+    lesson = None
+    try:
+        lesson_uuid = uuid.UUID(lesson_id)
+        lesson = (
+            db.query(PathLesson)
+            .join(LearningPath, LearningPath.id == PathLesson.path_id)
+            .filter(PathLesson.id == lesson_uuid, LearningPath.owner_id == owner_id)
+            .first()
+        )
+    except (ValueError, TypeError):
+        lesson = (
+            db.query(PathLesson)
+            .join(LearningPath, LearningPath.id == PathLesson.path_id)
+            .filter(PathLesson.lesson_key == lesson_id, LearningPath.owner_id == owner_id)
+            .first()
+        )
+    if not lesson:
+        raise HTTPException(status_code=404, detail="Lesson not found")
+    version = (
+        db.query(LessonVersion)
+        .filter(LessonVersion.path_lesson_id == lesson.id)
+        .order_by(LessonVersion.version_number.desc())
+        .first()
+    )
+    if not version or not version.lesson_package_json:
+        raise HTTPException(status_code=404, detail="Lesson package content not ready")
+    return lesson, version
+
+
+@router.get("/coach/{lesson_id}")
+def lesson_coaching(
+    lesson_id: str,
+    owner_id: uuid.UUID = Depends(get_current_user_id),
+    db: Session = Depends(get_db),
+):
+    """Grounded key points, source spotlights, fun facts and study tips."""
+    lesson, version = _owned_lesson(db, owner_id, lesson_id)
+    return build_lesson_coaching(
+        db, owner_id=owner_id, lesson=lesson, lesson_version=version
+    )
+
+
+@router.get("/smart-check")
+def smart_check(
+    owner_id: uuid.UUID = Depends(get_current_user_id),
+    db: Session = Depends(get_db),
+):
+    """A short diagnostic built from the learner's least certain concepts."""
+    return build_smart_check(db, owner_id)
+
+
+class SmartCheckNextRequest(BaseModel):
+    answeredQuestionKeys: list[str] = Field(default_factory=list, max_length=20)
+
+
+@router.post("/smart-check/next")
+def smart_check_next(
+    req: SmartCheckNextRequest,
+    owner_id: uuid.UUID = Depends(get_current_user_id),
+    db: Session = Depends(get_db),
+):
+    return next_smart_question(
+        db,
+        owner_id,
+        answered_question_keys=req.answeredQuestionKeys,
+        max_questions=5,
+    )
+
+
 class RecommendationDecision(BaseModel):
     decision: Literal["accept", "dismiss"]
     note: Optional[str] = Field(default=None, max_length=500)
@@ -183,9 +302,13 @@ def respond_to_recommendation(
     action = db.query(TeacherAction).filter(
         TeacherAction.id == action_id,
         TeacherAction.student_id == owner_id,
-        TeacherAction.status == "proposed",
     ).first()
-    if not action:
+    reason = dict(action.reason_json or {}) if action else {}
+    if (
+        not action
+        or action.status not in ("proposed", "accepted", "edited")
+        or reason.get("studentResponse")
+    ):
         raise HTTPException(status_code=404, detail="Recommendation not found.")
     action.status = "accepted" if req.decision == "accept" else "dismissed"
     action.resolved_at = datetime.datetime.utcnow()
