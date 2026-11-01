@@ -1,9 +1,29 @@
 # SETU Status Report
 
 **Session date:** 2026-11-01
-**Scope:** Embedded Background Pipeline, Table of Contents Outline Engine, Dynamic Adaptive Learning Path, NCERT "First Flight" 172-Page Live Delivery & Demo Readiness
+**Scope:** Frontend White-Screen Fixes, Production Build Verification, Judge-Ready README Authoring & GitHub Repository Push
 **Workspace:** `C:\projects\setu - V2`
 **Visible product name:** SETU (no version suffix in UI, titles, or manifests)
+
+---
+
+## 0.00 Frontend Stability Hardening & GitHub Push (2026-11-01 Final)
+
+### 0.00.1 Critical Fixes Applied
+1. **Frontend Blank Screen Fix (`frontend/src/components/visuals/ConceptMap.tsx`, `VisualRenderer.tsx`, `ErrorBoundary.tsx`)**:
+   - Diagnosed root cause of white screen when clicking "Open" on lessons: the lesson generator outputs concept map edges as JSON objects (`[{source, target, label}]`), but `ConceptMap.tsx` expected tuple arrays (`[from, to]`). Plain objects do not implement `Symbol.iterator`, throwing an unhandled `TypeError` that unmounted the React view.
+   - Updated `ConceptMap.tsx` to flexibly parse both edge object structures (`{source, target}` and `{from, to}`) and tuple arrays.
+   - Wrapped `VisualRenderer.tsx` in defensive `try/catch` and added a global `ErrorBoundary.tsx` around `<Routes>` in `App.tsx` with a recovery button.
+2. **Ask SETU Dispatch Hardening (`frontend/src/components/AskSetu.tsx`)**:
+   - Added a 20-second automatic safety watchdog timer in `submit()` to guarantee `busy` always resets to `false` even during network timeouts or interrupted requests.
+   - Lowered button disable threshold to `busy || question.trim().length === 0` (was `< 3`) for instantaneous dispatch responsiveness.
+3. **Frontend Production Build Clean**:
+   - Verified with `npm run build`: 1667 modules transformed into clean production bundles in 4.17s with 0 errors.
+4. **Judge-Ready README Authoring (`README.md`)**:
+   - Authored comprehensive documentation covering the 7 core pillars, architecture diagrams, PDF Caesar cipher font decoding, coordinate sync, 768d vector embeddings, local offline-first PWA sync, and a timestamped 3-minute demo video presentation script.
+5. **Full GitHub Repository Deployment**:
+   - Excluded raw NCERT PDFs (`context/ncert/`) and temp files via `.gitignore` per Rule 10.
+   - Committed 63 files (7,694 insertions) and pushed to remote `origin` (`https://github.com/Leeladhar-Kaluru/SETU-Adaptive-Learning-Platform.git`) on branch `master`.
 
 ---
 
